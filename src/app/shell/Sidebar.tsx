@@ -25,6 +25,7 @@ import {
   Settings,
   StickyNote,
   Zap,
+  Office,
 } from "../../shared/ui/icons";
 import {
   memo,
@@ -289,11 +290,13 @@ type Props = {
   onOpenInboxItem?: (item: LinkedWorkItem, sessionId: string) => void;
   onOpenNotes?: () => void;
   onOpenAutomations?: () => void;
+  onOpenOffice?: () => void;
   onGoToFile?: () => void;
   searchActive?: boolean;
   inboxActive?: boolean;
   notesActive?: boolean;
   automationsActive?: boolean;
+  officeActive?: boolean;
   notesEnabled?: boolean;
   onToggleProjectRail?: () => void;
   projectRailOpen?: boolean;
@@ -377,11 +380,13 @@ function SidebarComponent({
   onOpenInboxItem,
   onOpenNotes,
   onOpenAutomations,
+  onOpenOffice,
   onGoToFile,
   searchActive = false,
   inboxActive = false,
   notesActive = false,
   automationsActive = false,
+  officeActive = false,
   notesEnabled = true,
   onToggleProjectRail,
   projectRailOpen = true,
@@ -741,6 +746,7 @@ function SidebarComponent({
     !inboxActive &&
     !notesActive &&
     !automationsActive &&
+    !officeActive &&
     !settingsOpen &&
     inProject;
   const sidebarVisible = open && sidebarAvailable;
@@ -1639,10 +1645,12 @@ function SidebarComponent({
               onOpenNotificationSettings={onOpenNotificationSettings}
               onOpenNotes={notesEnabled ? onOpenNotes : undefined}
               onOpenAutomations={onOpenAutomations}
+              onOpenOffice={onOpenOffice}
               searchActive={searchActive}
               inboxActive={inboxActive}
               notesActive={notesActive}
               automationsActive={automationsActive}
+              officeActive={officeActive}
               inboxUnseen={inboxUnseen}
             />
           ) : null}
@@ -2144,7 +2152,9 @@ function SidebarComponent({
           onOpenNotes={notesEnabled ? onOpenNotes : undefined}
           notesActive={notesActive}
           onOpenAutomations={onOpenAutomations}
+          onOpenOffice={onOpenOffice}
           automationsActive={automationsActive}
+          officeActive={officeActive}
           onOpenSettings={onOpenSettings}
           onTogglePanel={onToggleProjectRail}
           onLeaveActive={onGoBack}
@@ -2173,7 +2183,9 @@ function SidebarComponent({
           onOpenNotes={onOpenNotes}
           notesActive={notesActive}
           onOpenAutomations={onOpenAutomations}
+          onOpenOffice={onOpenOffice}
           automationsActive={automationsActive}
+          officeActive={officeActive}
           onTogglePanel={onToggleProjectRail}
           onSelectProject={onSelectProject}
           onOpenProject={onOpenProject}
@@ -2250,10 +2262,12 @@ function SidebarProjectPicker({
   onOpenNotificationSettings,
   onOpenNotes,
   onOpenAutomations,
+  onOpenOffice,
   searchActive = false,
   inboxActive = false,
   notesActive = false,
   automationsActive = false,
+  officeActive = false,
   inboxUnseen = false,
 }: {
   cwd: string;
@@ -2268,10 +2282,12 @@ function SidebarProjectPicker({
   onOpenNotificationSettings?: (projectPath?: string) => void;
   onOpenNotes?: () => void;
   onOpenAutomations?: () => void;
+  onOpenOffice?: () => void;
   searchActive?: boolean;
   inboxActive?: boolean;
   notesActive?: boolean;
   automationsActive?: boolean;
+  officeActive?: boolean;
   inboxUnseen?: boolean;
 }) {
   const [inboxMenu, setInboxMenu] = useState<{ x: number; y: number } | null>(
@@ -2346,6 +2362,15 @@ function SidebarProjectPicker({
             <Zap className="size-3.5" strokeWidth={1.75} />
           </IconButton>
         ) : null}
+        {onOpenOffice ? (
+          <IconButton
+            label="Office"
+            active={officeActive}
+            onClick={onOpenOffice}
+          >
+            <Office className="size-3.5" strokeWidth={1.75} />
+          </IconButton>
+        ) : null}
       </div>
       {inboxMenu ? (
         <InboxNotificationMenu
@@ -2384,7 +2409,9 @@ function CompactProjectRail({
   onOpenNotes,
   notesActive,
   onOpenAutomations,
+  onOpenOffice,
   automationsActive,
+  officeActive,
   onOpenSettings,
   onTogglePanel,
   onLeaveActive,
@@ -2411,7 +2438,9 @@ function CompactProjectRail({
   onOpenNotes?: () => void;
   notesActive: boolean;
   onOpenAutomations?: () => void;
+  onOpenOffice?: () => void;
   automationsActive: boolean;
+  officeActive: boolean;
   onOpenSettings?: () => void;
   onTogglePanel?: () => void;
   onLeaveActive?: () => void;
@@ -2424,7 +2453,11 @@ function CompactProjectRail({
   const action = (active: boolean, open?: () => void) =>
     active && onLeaveActive ? onLeaveActive : open;
   const workspaceActive =
-    !searchActive && !inboxActive && !notesActive && !automationsActive;
+    !searchActive &&
+    !inboxActive &&
+    !notesActive &&
+    !automationsActive &&
+    !officeActive;
   const openWorkspaceTab = (nextTab: SidebarTab) => {
     if (!workspaceActive) onLeaveActive?.();
     onTabChange(nextTab);
@@ -2522,6 +2555,12 @@ function CompactProjectRail({
           icon={Zap}
           active={automationsActive}
           onClick={action(automationsActive, onOpenAutomations)}
+        />
+        <CompactRailAction
+          label="Office"
+          icon={Office}
+          active={officeActive}
+          onClick={action(officeActive, onOpenOffice)}
         />
       </div>
       <div className="min-h-2 flex-1" />
