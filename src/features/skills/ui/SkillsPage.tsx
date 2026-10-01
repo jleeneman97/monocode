@@ -24,7 +24,9 @@ import {
   loadDisabledSkillPaths,
   saveDisabledSkillPaths,
   SKILLS_CHANGE_EVENT,
+  type SkillCreateScope,
 } from "../model/skills";
+import { projectGroupForCwd } from "../../projects/model/projectGroups";
 
 /** Inspect and manage file skills without modifying provider-owned catalogs. */
 export function SkillsPage({
@@ -126,7 +128,7 @@ export function SkillsPage({
     let cancelled = false;
     setSkills(null);
     setError(null);
-    listSkills(cwd)
+    listSkills(cwd, null, projectGroupForCwd(cwd)?.id)
       .then((next) => {
         if (cancelled) return;
         setSkills(next);
@@ -189,7 +191,7 @@ export function SkillsPage({
     });
   };
 
-  const onCreate = (name: string, scope: "project" | "user"): void => {
+  const onCreate = (name: string, scope: SkillCreateScope): void => {
     setBusy(true);
     setCreateError(null);
     void createBlankSkill({ cwd, name, scope })
@@ -335,7 +337,9 @@ export function SkillsPage({
                               ? "Personal"
                               : skill.scope === "builtin"
                                 ? "MonoCode"
-                                : "Project"}
+                                : skill.scope === "group"
+                                  ? "Group"
+                                  : "Project"}
                           </span>
                           <span className="w-20 shrink-0 truncate text-right font-sans text-[11px] text-content/40">
                             {skill.source}

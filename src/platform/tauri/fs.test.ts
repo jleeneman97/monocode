@@ -77,6 +77,17 @@ describe("listSkills", () => {
     expect(invoke).toHaveBeenCalledWith("list_skills", {
       cwd: "/repo",
       disabledPaths: ["/repo/.agents/skills/review/SKILL.md"],
+      groupId: null,
+    });
+  });
+
+  it("passes the project group id", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce([]);
+    await listSkills("/repo", null, "group-1");
+    expect(invoke).toHaveBeenCalledWith("list_skills", {
+      cwd: "/repo",
+      disabledPaths: null,
+      groupId: "group-1",
     });
   });
 
@@ -86,6 +97,7 @@ describe("listSkills", () => {
     expect(invoke).toHaveBeenCalledWith("list_skills", {
       cwd: "/repo",
       disabledPaths: null,
+      groupId: null,
     });
   });
 });

@@ -77,7 +77,8 @@ fn normalize_path_for_compare(path: &str) -> String {
     path.to_string()
 }
 
-/// Skills visible for the open project: `.agents/skills` first, then native
+/// Skills visible for the open project: `.agents/skills` first, then the
+/// project group's `~/.agents/groups/<id>/skills`, then personal and native
 /// harness folders. Same name: earlier roots win.
 /// Excludes disabled paths before deduplication so lower-priority enabled
 /// same-name files can fall through.
@@ -85,19 +86,41 @@ fn normalize_path_for_compare(path: &str) -> String {
 pub fn list_skills(
     cwd: String,
     disabled_paths: Option<Vec<String>>,
+    group_id: Option<String>,
 ) -> Result<Vec<DiscoveredSkill>, String> {
     let project = expand_home(&cwd);
     let home = dirs_home().map(PathBuf::from);
-    Ok(list_skills_from(
+    Ok(list_skills_for(
         &project,
         home.as_deref(),
+        group_id.as_deref(),
         disabled_paths.as_deref(),
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn list_skills_from(
     project: &Path,
     home: Option<&Path>,
+    disabled_paths: Option<&[String]>,
+) -> Vec<DiscoveredSkill> {
+    list_skills_for(project, home, None, disabled_paths)
+}
+
+/// Group ids come from the frontend; only plain ids may name a folder.
+fn group_skills_root(home: &Path, group_id: &str) -> Option<PathBuf> {
+    let valid = !group_id.is_empty()
+        && group_id.len() <= 128
+        && group_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_');
+    valid.then(|| home.join(".agents/groups").join(group_id).join("skills"))
+}
+
+pub(crate) fn list_skills_for(
+    project: &Path,
+    home: Option<&Path>,
+    group_id: Option<&str>,
     disabled_paths: Option<&[String]>,
 ) -> Vec<DiscoveredSkill> {
     let disabled_filter = DisabledFilter::new(disabled_paths);
@@ -129,6 +152,9 @@ pub(crate) fn list_skills_from(
     // Highest priority first so later roots cannot replace a name.
     add_root(project.join(".agents/skills"), "project", "agents");
     if let Some(home) = home {
+        if let Some(root) = group_id.and_then(|id| group_skills_root(home, id)) {
+            add_root(root, "group", "agents");
+        }
         add_root(home.join(".agents/skills"), "user", "agents");
     }
 
@@ -656,6 +682,49 @@ mod tests {
         let native = skills.iter().find(|s| s.name == "cursor-only").unwrap();
         assert_eq!(native.source, "cursor");
         assert_eq!(native.scope, "project");
+    }
+
+    #[test]
+    fn group_skills_sit_between_project_and_personal() {
+        let project = tmp("proj");
+        let home = tmp("home");
+        let group = home.0.join(".agents/groups/work-1/skills");
+        write_skill(
+            &project.0.join(".agents/skills"),
+            "ship",
+            "---\nname: ship\ndescription: Project ship\n---\n",
+        );
+        write_skill(
+            &group,
+            "ship",
+            "---\nname: ship\ndescription: Group ship\n---\n",
+        );
+        write_skill(
+            &group,
+            "ticket",
+            "---\nname: ticket\ndescription: Group ticket\n---\n",
+        );
+        write_skill(
+            &home.0.join(".agents/skills"),
+            "ticket",
+            "---\nname: ticket\ndescription: Personal ticket\n---\n",
+        );
+
+        let skills = list_skills_for(&project.0, Some(&home.0), Some("work-1"), None);
+        let ship = skills.iter().find(|s| s.name == "ship").unwrap();
+        assert_eq!(ship.description, "Project ship");
+        let ticket = skills.iter().find(|s| s.name == "ticket").unwrap();
+        assert_eq!(ticket.description, "Group ticket");
+        assert_eq!(ticket.scope, "group");
+        assert_eq!(ticket.source, "agents");
+
+        let ungrouped = list_skills_for(&project.0, Some(&home.0), None, None);
+        let ticket = ungrouped.iter().find(|s| s.name == "ticket").unwrap();
+        assert_eq!(ticket.description, "Personal ticket");
+
+        let escaped = list_skills_for(&project.0, Some(&home.0), Some("../groups/work-1"), None);
+        let ticket = escaped.iter().find(|s| s.name == "ticket").unwrap();
+        assert_eq!(ticket.scope, "user");
     }
 
     #[test]

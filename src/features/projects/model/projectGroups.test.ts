@@ -6,6 +6,7 @@ import {
   loadProjectGroupAssignments,
   loadProjectGroups,
   nextProjectGroupName,
+  projectGroupForCwd,
   saveProjectGroupAssignments,
   saveProjectGroups,
   setProjectGroupAssignment,
@@ -73,5 +74,21 @@ describe("project groups", () => {
       name: "New group 3",
       collapsed: false,
     });
+  });
+
+  it("resolves the group for a project, its subfolders, and its worktrees", () => {
+    saveProjectGroups([
+      { id: "work", name: "Work", collapsed: false },
+      { id: "nested", name: "Nested", collapsed: false },
+    ]);
+    setProjectGroupAssignment("/sites/shop", "work");
+    setProjectGroupAssignment("/sites/shop/packages/app", "nested");
+
+    expect(projectGroupForCwd("/sites/shop")?.id).toBe("work");
+    expect(projectGroupForCwd("/sites/shop/src")?.id).toBe("work");
+    expect(projectGroupForCwd("/sites/shop-worktrees/ASANA-1")?.id).toBe("work");
+    expect(projectGroupForCwd("/sites/shop/packages/app/src")?.id).toBe("nested");
+    expect(projectGroupForCwd("/sites/shopping")).toBeUndefined();
+    expect(projectGroupForCwd("/sites/other")).toBeUndefined();
   });
 });

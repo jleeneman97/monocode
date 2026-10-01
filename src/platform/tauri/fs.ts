@@ -156,7 +156,7 @@ export type DiscoveredSkill = {
   name: string;
   description: string;
   path: string;
-  scope: "project" | "user" | "builtin";
+  scope: "project" | "group" | "user" | "builtin";
   source:
     | "agents"
     | "claude"
@@ -175,10 +175,12 @@ export type DiscoveredSkill = {
 export function listSkills(
   cwd: string,
   disabledPaths?: readonly string[] | null,
+  groupId?: string | null,
 ): Promise<DiscoveredSkill[]> {
   return invoke<DiscoveredSkill[]>("list_skills", {
     cwd,
     disabledPaths: disabledPaths ?? null,
+    groupId: groupId ?? null,
   });
 }
 

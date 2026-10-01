@@ -8,10 +8,12 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { isLocalProject } from "../../projects/model/recents";
+import { projectGroupForCwd } from "../../projects/model/projectGroups";
 import {
   isValidSkillName,
   slugSkillName,
   type Skill,
+  type SkillCreateScope,
 } from "../model/skills";
 import { useLockOverscroll } from "../../../shared/hooks/useLockOverscroll";
 
@@ -29,7 +31,7 @@ type Props = {
   onPick: (skill: Skill) => void;
   onStartCreate: () => void;
   onCancelCreate: () => void;
-  onCreate: (name: string, scope: "project" | "user") => void;
+  onCreate: (name: string, scope: SkillCreateScope) => void;
 };
 
 export function SkillPicker({
@@ -214,12 +216,13 @@ export function CreateSkillForm({
   error?: string | null;
   busy?: boolean;
   onCancel: () => void;
-  onCreate: (name: string, scope: "project" | "user") => void;
+  onCreate: (name: string, scope: SkillCreateScope) => void;
 }): ReactNode {
   const input = useRef<HTMLInputElement>(null);
   const project = isLocalProject(cwd);
+  const [group] = useState(() => projectGroupForCwd(cwd));
   const [name, setName] = useState(() => slugSkillName(query));
-  const [scope, setScope] = useState<"project" | "user">(
+  const [scope, setScope] = useState<SkillCreateScope>(
     project ? "project" : "user",
   );
 
@@ -234,7 +237,7 @@ export function CreateSkillForm({
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (!valid || busy) return;
-    onCreate(slug, project ? scope : "user");
+    onCreate(slug, project || scope === "group" ? scope : "user");
   };
 
   return (
@@ -269,6 +272,16 @@ export function CreateSkillForm({
           disabled={!project || busy}
           onClick={() => setScope("project")}
         />
+        {group ? (
+          <ScopeButton
+            label={`Group · ${group.name}`}
+            hint="~/.agents/groups"
+            monospace={monospace}
+            selected={scope === "group"}
+            disabled={busy}
+            onClick={() => setScope("group")}
+          />
+        ) : null}
         <ScopeButton
           label="Personal"
           hint="~/.agents/skills"
@@ -348,6 +361,7 @@ function scopeLabel(skill: Skill): string {
   }
   if (skill.kind === "builtin") return "monocode";
   if (skill.scope === "user") return "personal";
+  if (skill.scope === "group") return "group";
   if (skill.source !== "agents" && skill.source !== "monocode") return skill.source;
   return "project";
 }

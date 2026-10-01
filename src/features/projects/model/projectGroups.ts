@@ -1,4 +1,4 @@
-import { pathKey } from "../../../shared/lib/paths";
+import { isEqualOrInside, pathKey } from "../../../shared/lib/paths";
 import { PROJECT_MASCOTS } from "./projectMascots";
 import { TAB_GROUP_COLORS, tabGroupColor } from "../../workspace/model/tabGroups";
 import { notifyProjectPathsChanged } from "./recents";
@@ -127,6 +127,33 @@ export function projectGroupIdForPath(
   assignments: Record<string, string>,
 ): string | undefined {
   return assignments[pathKey(path)];
+}
+
+/**
+ * Group of the project that contains `cwd`, including its sibling
+ * `<project>-worktrees` checkouts. The deepest matching project wins.
+ */
+export function projectGroupForCwd(cwd: string): ProjectGroup | undefined {
+  const groups = loadProjectGroups();
+  const assignments = loadProjectGroupAssignments(groups);
+  let best: { length: number; groupId: string } | undefined;
+  for (const [projectKey, groupId] of Object.entries(assignments)) {
+    if (
+      !isEqualOrInside(cwd, projectKey) &&
+      !isEqualOrInside(cwd, `${projectKey}-worktrees`)
+    ) {
+      continue;
+    }
+    if (!best || projectKey.length > best.length) {
+      best = { length: projectKey.length, groupId };
+    }
+  }
+  return best && groups.find((group) => group.id === best.groupId);
+}
+
+/** Home-relative folder holding a group's shared skills. */
+export function groupSkillsRelativePath(groupId: string): string {
+  return `.agents/groups/${groupId}/skills`;
 }
 
 export function setProjectGroupAssignment(

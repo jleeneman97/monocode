@@ -9,6 +9,10 @@ import {
 import { invalidateProjectFiles } from "../../files/model/fileIndex";
 import { joinPath } from "../../../shared/lib/paths";
 import { isLocalProject, normalizeProjectPath } from "../../projects/model/recents";
+import {
+  groupSkillsRelativePath,
+  projectGroupForCwd,
+} from "../../projects/model/projectGroups";
 import { isMarkdownBlockquotePosition } from "../../sessions/model/quoteDraft";
 import type { HarnessId } from "../../sessions/model/session";
 import { getHarness } from "../../../integrations/harness/core/registry";
@@ -61,7 +65,8 @@ function disabledSkillPathSet(): Set<string> {
   return new Set(loadDisabledSkillPaths());
 }
 
-export type SkillScope = "project" | "user" | "builtin";
+export type SkillScope = "project" | "group" | "user" | "builtin";
+export type SkillCreateScope = "project" | "group" | "user";
 export type SkillSource =
   | "agents"
   | "claude"
@@ -140,7 +145,8 @@ const catalogEntries = new Map<string, CatalogEntry>();
 
 export function skillCatalogKey(context: SkillCatalogContext): string {
   const sessionScoped = !!getHarness(context.harness)?.commands?.subscribe;
-  return `${context.harness}\0${normalizeProjectPath(context.cwd)}${sessionScoped && context.sessionId ? `\0${context.sessionId}` : ""}`;
+  const groupId = projectGroupForCwd(context.cwd)?.id;
+  return `${context.harness}\0${normalizeProjectPath(context.cwd)}${groupId ? `\0group:${groupId}` : ""}${sessionScoped && context.sessionId ? `\0${context.sessionId}` : ""}`;
 }
 
 export function hasNativeCommands(harness: HarnessId): boolean {
@@ -312,7 +318,11 @@ async function loadCatalog(context: SkillCatalogContext): Promise<Skill[]> {
     }));
   }
   const disabledPaths = loadDisabledSkillPaths();
-  const discovered = await listSkills(context.cwd, disabledPaths);
+  const discovered = await listSkills(
+    context.cwd,
+    disabledPaths,
+    projectGroupForCwd(context.cwd)?.id,
+  );
   const disabled = disabledSkillPathSet();
   return mergeCatalog(discovered.filter((skill) => !disabled.has(skill.path)));
 }
@@ -340,7 +350,10 @@ function asSkill(skill: DiscoveredSkill): FileSkill {
     description: skill.description,
     invocation: skill.name,
     path: skill.path,
-    scope: skill.scope === "user" ? "user" : "project",
+    scope:
+      skill.scope === "user" || skill.scope === "group"
+        ? skill.scope
+        : "project",
     source: skill.source === "monocode" ? "monocode" : skill.source,
   };
 }
@@ -521,17 +534,24 @@ description: ${title}. Use when the user asks to ${words}.
 export async function createBlankSkill(input: {
   cwd: string;
   name: string;
-  scope: "project" | "user";
+  scope: SkillCreateScope;
 }): Promise<string> {
   const name = slugSkillName(input.name);
   if (!isValidSkillName(name)) {
     throw new Error("Use a lowercase name with letters, numbers, and hyphens.");
   }
+  const group =
+    input.scope === "group" ? projectGroupForCwd(input.cwd) : undefined;
+  if (input.scope === "group" && !group) {
+    throw new Error("This project is not in a group.");
+  }
   const root =
-    input.scope === "user" || !isLocalProject(input.cwd)
+    input.scope !== "project" || !isLocalProject(input.cwd)
       ? await homeDir()
       : input.cwd;
-  const relative = `.agents/skills/${name}`;
+  const relative = group
+    ? `${groupSkillsRelativePath(group.id)}/${name}`
+    : `.agents/skills/${name}`;
   await createPath(root, relative, true);
   const path = joinPath(root, `${relative}/SKILL.md`);
   await writeTextFile(path, blankSkillMarkdown(name));
