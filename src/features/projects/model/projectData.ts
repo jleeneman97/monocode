@@ -18,6 +18,10 @@ import {
 import { rebaseSessionFolderSettings } from "../../sessions/model/sessionFolders";
 import { clearProjectProviders, rebaseProjectProviders } from "../../sessions/model/projectProviders";
 import {
+  clearProjectFileEditor,
+  rebaseProjectFileEditor,
+} from "./projectFileEditor";
+import {
   clearProjectSidebarTab,
   rebaseProjectSidebarTab,
 } from "../../settings/model/projectSidebarTab";
@@ -43,6 +47,7 @@ export async function removeProjectData(path: string): Promise<void> {
   clearTabGroupSettings(key);
   removeProjectGroupAssignment(normalized);
   clearProjectProviders(key);
+  clearProjectFileEditor(key);
   clearProjectSidebarTab(normalized);
 }
 
@@ -55,5 +60,6 @@ export function rebaseProjectData(from: string, to: string): void {
   rebaseProjectChatBackgroundSetting(oldKey, newKey);
   rebaseSessionFolderSettings(from, to);
   rebaseProjectProviders(oldKey, newKey);
+  rebaseProjectFileEditor(oldKey, newKey);
   rebaseProjectSidebarTab(from, to);
 }

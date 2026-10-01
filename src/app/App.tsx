@@ -348,6 +348,10 @@ import {
   removeProjectData,
 } from "../features/projects/model/projectData";
 import {
+  BUILTIN_FILE_EDITOR,
+  fileEditorFor,
+} from "../features/projects/model/projectFileEditor";
+import {
   forgetProjectLocation,
   rememberProjectLocation,
   synchronizeProjectLocation,
@@ -5616,18 +5620,22 @@ function Workspace({
         const fileProjectCwd = sidebarCwdRef.current;
         const resolved = await resolveFileOpenRequest(fileCwd, path, options);
         rememberOpenedFile(fileCwd, resolved);
-        // Files open in PhpStorm; the built-in editor is only the fallback
-        // when PhpStorm cannot be launched.
-        try {
-          await openFileInExternalEditor(
-            "phpstorm",
-            resolved,
-            navigation?.line,
-            navigation?.column,
-          );
-          return;
-        } catch (error) {
-          console.warn("Could not open file in PhpStorm", error);
+        // Files open in the project's chosen editor (PhpStorm unless the
+        // project picked another). The built-in editor is the fallback when
+        // that editor cannot be launched, or the project's own choice.
+        const editor = fileEditorFor(resolved, fileProjectCwd, fileCwd);
+        if (editor !== BUILTIN_FILE_EDITOR) {
+          try {
+            await openFileInExternalEditor(
+              editor,
+              resolved,
+              navigation?.line,
+              navigation?.column,
+            );
+            return;
+          } catch (error) {
+            console.warn(`Could not open file in ${editor}`, error);
+          }
         }
         const tab = tabsRef.current.find(
           (entry) => entry.id === activeTabIdRef.current,

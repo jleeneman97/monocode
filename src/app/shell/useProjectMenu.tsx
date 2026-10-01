@@ -3,6 +3,7 @@ import {
   AppWindow,
   Archive,
   BellOff,
+  FileScript,
   FolderOpen,
   FolderTree,
   ImagePlus,
@@ -76,6 +77,12 @@ import { useProjectNotificationPreferences } from "../../features/notifications/
 import { useNotificationProjects } from "../../features/notifications/hooks/useNotificationProjects";
 import { updateNotificationPreferences } from "../../features/notifications/model/notificationPreferences";
 import type { ExplorerMenuItem } from "../../features/files/ui/ExplorerMenu";
+import {
+  BUILTIN_FILE_EDITOR,
+  DEFAULT_FILE_EDITOR,
+  projectFileEditor,
+  setProjectFileEditor,
+} from "../../features/projects/model/projectFileEditor";
 
 const REVEAL_LABEL = IS_MAC
   ? "Reveal in Finder"
@@ -83,12 +90,66 @@ const REVEAL_LABEL = IS_MAC
     ? "Reveal in File Explorer"
     : "Open Containing Folder";
 
+const BUILTIN_FILE_EDITOR_LABEL = "MonoCode editor";
+
+function fileEditorLabel(
+  editorId: string,
+  externalEditors: ExternalEditor[] | null,
+): string {
+  if (editorId === BUILTIN_FILE_EDITOR) return BUILTIN_FILE_EDITOR_LABEL;
+  const name =
+    externalEditors?.find((editor) => editor.id === editorId)?.name ??
+    (editorId === DEFAULT_FILE_EDITOR ? "PhpStorm" : editorId);
+  return editorId === DEFAULT_FILE_EDITOR ? `${name} (default)` : name;
+}
+
+/** Choices for the program that opens this project's files. */
+function fileEditorItem(
+  current: string,
+  externalEditors: ExternalEditor[] | null,
+): TabGroupMenuExtraItem {
+  const editors: ExplorerMenuItem[] =
+    externalEditors === null
+      ? [
+          {
+            kind: "item",
+            id: "file-editor:loading",
+            label: "Looking for editors…",
+            disabled: true,
+          },
+        ]
+      : externalEditors.map((editor) => ({
+          kind: "item" as const,
+          id: `file-editor:${editor.id}`,
+          label: fileEditorLabel(editor.id, externalEditors),
+          checked: editor.id === current,
+        }));
+  return {
+    id: "file-editor",
+    label: "Open files with",
+    description: fileEditorLabel(current, externalEditors),
+    icon: FileScript,
+    submenu: [
+      ...editors,
+      { kind: "sep" },
+      {
+        kind: "item",
+        id: `file-editor:${BUILTIN_FILE_EDITOR}`,
+        label: BUILTIN_FILE_EDITOR_LABEL,
+        description: "Open files in MonoCode tabs",
+        checked: current === BUILTIN_FILE_EDITOR,
+      },
+    ],
+  };
+}
+
 function projectMenuExtraItems(
   pinned: boolean,
   canRemove: boolean,
   canConfigureNotifications: boolean,
   notificationReady: boolean,
   externalEditors: ExternalEditor[] | null,
+  fileEditor: string,
   projectGroups: ProjectGroup[],
   currentProjectGroupId?: string,
 ): TabGroupMenuExtraItem[] {
@@ -171,6 +232,7 @@ function projectMenuExtraItems(
       icon: Settings,
     });
   }
+  items.push(fileEditorItem(fileEditor, externalEditors));
   if (canRemove) {
     items.push(
       { id: "archive", label: "Archive", icon: Archive, sepBefore: true },
@@ -368,6 +430,14 @@ export function useProjectMenu({
           setMenuError(error instanceof Error ? error.message : String(error));
         });
       return false;
+    } else if (action.startsWith("file-editor:")) {
+      const editorId = action.slice("file-editor:".length);
+      if (
+        editorId !== BUILTIN_FILE_EDITOR &&
+        !externalEditors?.some((editor) => editor.id === editorId)
+      )
+        return false;
+      setProjectFileEditor(path, editorId);
     } else if (action === "notifications-settings") {
       onOpenNotificationSettings?.(path);
     } else if (action === "pin" || action === "unpin") {
@@ -444,6 +514,7 @@ export function useProjectMenu({
           Boolean(onOpenNotificationSettings),
           Boolean(readyNotificationProject),
           externalEditors,
+          projectFileEditor(projectMenu.path),
           loadProjectGroups(),
           projectGroupIdForPath(
             projectMenu.path,
