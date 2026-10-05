@@ -13,6 +13,7 @@ import {
   Particles,
   drawAlertBubble,
   drawLampGlow,
+  drawMailBubble,
   drawScreenGlow,
   drawThoughtBubble,
 } from "./effects";
@@ -94,12 +95,20 @@ export class OfficeScene {
         props: previous?.props ?? deskPropsFor(desk.key),
       });
     }
+    const previousDesks = this.desks;
     this.desks = next;
     for (const [key, actor] of this.actors) {
       const view = next.get(key);
       if (!view) {
         this.actors.delete(key);
         continue;
+      }
+      // A new mascot or color restyles whoever is at the desk.
+      if (
+        view.desk.color !== previousDesks.get(key)?.desk.color ||
+        view.desk.monkeyFur !== previousDesks.get(key)?.desk.monkeyFur
+      ) {
+        actor.look = lookFor(key, view.desk.color, view.desk.monkeyFur);
       }
       // A resize moves the desk; keep a seated worker in their chair.
       if (actor.seated > 0 || actor.progress > view.slot.pathLength) {
@@ -125,7 +134,7 @@ export class OfficeScene {
   private newActor(view: DeskView, seated: boolean): Actor {
     return {
       key: view.desk.key,
-      look: lookFor(view.desk.key, view.desk.color),
+      look: lookFor(view.desk.key, view.desk.color, view.desk.monkeyFur),
       progress: seated ? view.slot.pathLength : 0,
       seated: seated ? 1 : 0,
       alpha: seated ? 1 : 0,
@@ -311,6 +320,7 @@ export class OfficeScene {
       if (!visible(seat.y)) continue;
       if (deskView.desk.status === "thinking") drawThoughtBubble(ctx, seat.x + 40, seat.y - 66, time);
       if (deskView.desk.status === "needs-input") drawAlertBubble(ctx, seat.x - 40, seat.y - 60, time);
+      if (deskView.desk.status === "updates") drawMailBubble(ctx, seat.x - 42, seat.y - 62, time);
     }
     ctx.restore();
 
@@ -369,6 +379,8 @@ function sitMode(status: OfficeDeskStatus): SitMode {
     case "thinking":
       return "thinking";
     case "needs-input":
+    case "updates":
+      // Both want the user: wave them over.
       return "waving";
     default:
       return "relaxed";

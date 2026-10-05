@@ -234,6 +234,17 @@ function DeskOverlay({
           </span>
         ) : null}
       </span>
+      {/* Round count of unread replies and waiting questions, by the head. */}
+      {desk.unread > 0 && desk.status !== "offline" ? (
+        <span
+          key={`unread-${desk.unread}`}
+          aria-hidden
+          className="office-badge absolute grid h-5 min-w-5 place-items-center rounded-full bg-red-500 px-1.5 text-[11px] font-bold leading-none tabular-nums text-white shadow-[0_2px_8px_rgba(0,0,0,0.45)] ring-2 ring-white/85"
+          style={{ left: "calc(50% + 22px)", top: CELL.seatY - 84 }}
+        >
+          {desk.unread > 99 ? "99+" : desk.unread}
+        </span>
+      ) : null}
       {/* Name plate under the desk. */}
       <span
         className="absolute left-1/2 flex max-w-[88%] -translate-x-1/2 items-center gap-1.5 rounded-md bg-black/35 px-2 py-0.5 text-[11.5px] font-medium text-white/90 shadow-sm backdrop-blur-[2px] transition-colors group-hover:bg-black/55"

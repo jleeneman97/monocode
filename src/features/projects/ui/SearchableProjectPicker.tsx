@@ -23,6 +23,7 @@ import {
   resolveTabGroupLabel,
   resolveTabGroupLogo,
   resolveTabGroupMascot,
+  usesAutomaticTabGroupColor,
 } from "../../workspace/model/tabGroups";
 import { Check, ChevronDown, Plus, Search } from "../../../shared/ui/icons";
 import { Popover } from "../../../shared/ui/Popover";
@@ -237,6 +238,11 @@ export function SearchableProjectPicker({
             project={seed}
             color={color}
             name={resolveTabGroupMascot(key, groupMascots)}
+            multicolor={usesAutomaticTabGroupColor(
+              key,
+              groupColors,
+              groupCustomColors,
+            )}
             className={`${compact ? "size-3.5" : "size-3"} shrink-0`}
             active={busy}
           />
@@ -345,6 +351,11 @@ export function SearchableProjectPicker({
                           project={itemSeed}
                           color={itemColor}
                           name={resolveTabGroupMascot(itemKey, groupMascots)}
+                          multicolor={usesAutomaticTabGroupColor(
+                            itemKey,
+                            groupColors,
+                            groupCustomColors,
+                          )}
                           className="size-3.5"
                         />
                       )}

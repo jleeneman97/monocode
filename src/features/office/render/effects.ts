@@ -228,6 +228,47 @@ export function drawAlertBubble(ctx: CanvasRenderingContext2D, x: number, y: num
   ctx.restore();
 }
 
+/** A blue envelope that bobs and pulses while finished work waits unread. */
+export function drawMailBubble(ctx: CanvasRenderingContext2D, x: number, y: number, time: number) {
+  const bob = Math.sin(time * 3.2) * 2;
+  const pulse = 1 + Math.max(0, Math.sin(time * 5)) * 0.07;
+  ctx.save();
+  ctx.translate(x, y + bob);
+  ctx.scale(pulse, pulse);
+  // Ripple ring.
+  const ring = (time * 0.9) % 1;
+  ctx.beginPath();
+  ctx.arc(0, 0, 12 + ring * 12, 0, Math.PI * 2);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = `rgba(56,189,248,${0.55 * (1 - ring)})`;
+  ctx.stroke();
+  ctx.shadowColor = "rgba(56,189,248,0.85)";
+  ctx.shadowBlur = 12;
+  ctx.beginPath();
+  ctx.arc(0, 0, 12, 0, Math.PI * 2);
+  ctx.fillStyle = "rgb(14,165,233)";
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.beginPath();
+  ctx.moveTo(5, 9);
+  ctx.lineTo(10, 15);
+  ctx.lineTo(-1, 11);
+  ctx.fill();
+  // Envelope.
+  ctx.beginPath();
+  ctx.roundRect(-6.5, -4.5, 13, 9, 1.5);
+  ctx.fillStyle = "rgb(255,255,255)";
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-6.5, -4);
+  ctx.lineTo(0, 1);
+  ctx.lineTo(6.5, -4);
+  ctx.lineWidth = 1.3;
+  ctx.strokeStyle = "rgb(14,116,170)";
+  ctx.stroke();
+  ctx.restore();
+}
+
 /** Screen light on the worker's face and the desk, stronger in the dark. */
 export function drawScreenGlow(
   ctx: CanvasRenderingContext2D,

@@ -19,7 +19,12 @@ export type CharacterLook = {
   headphoneColor: Rgb;
   /** Offsets idle motion so neighbors never move in lockstep. */
   seed: number;
+  /** Projects with the monkey mascot get a monkey at their desk. */
+  monkey?: boolean;
 };
+
+/** The monkey's face, inner ears, hands, and feet; its fur is the mascot color. */
+const MONKEY_FACE: Rgb = { r: 242, g: 204, b: 157 };
 
 const SKINS: Rgb[] = [
   { r: 255, g: 222, b: 196 },
@@ -50,9 +55,30 @@ const HEADPHONES: Rgb[] = [
   { r: 230, g: 90, b: 80 },
 ];
 
-export function lookFor(key: string, color: string): CharacterLook {
+export function lookFor(
+  key: string,
+  color: string,
+  /** Fur color when the project's mascot is the monkey. */
+  monkeyFur?: string,
+): CharacterLook {
   const hash = hashString(key);
   const pick = <T,>(list: T[], shift: number) => list[(hash >>> shift) % list.length];
+  if (monkeyFur) {
+    const fur = parseColor(monkeyFur);
+    return {
+      skin: MONKEY_FACE,
+      hair: fur,
+      hairStyle: 0,
+      shirt: fur,
+      pants: fur,
+      shoes: shade(MONKEY_FACE, -0.12),
+      glasses: false,
+      headphones: false,
+      headphoneColor: pick(HEADPHONES, 19),
+      seed: (hash % 1000) / 97,
+      monkey: true,
+    };
+  }
   return {
     skin: pick(SKINS, 0),
     hair: pick(HAIRS, 3),
@@ -158,6 +184,10 @@ function drawHead(
   cy: number,
   options: FaceOptions,
 ) {
+  if (look.monkey) {
+    drawMonkeyHead(ctx, look, cx, cy, options);
+    return;
+  }
   const { facing, time } = options;
   const r = 15;
   const side = facing === "left" || facing === "right";
@@ -390,6 +420,180 @@ function drawHeadphones(
   }
 }
 
+/**
+ * A monkey's head: round fur, big ears with pale insides, a tuft on top, and
+ * a pale heart-shaped face around the eyes and muzzle.
+ */
+function drawMonkeyHead(
+  ctx: CanvasRenderingContext2D,
+  look: CharacterLook,
+  cx: number,
+  cy: number,
+  options: FaceOptions,
+) {
+  const { facing, time } = options;
+  const fur = look.hair;
+  const face = look.skin;
+  const r = 15;
+  const side = facing === "left" || facing === "right";
+
+  // Neck.
+  ctx.fillStyle = rgba(shade(fur, -0.15));
+  ctx.fillRect(cx - 5, cy + r - 4, 10, 7);
+
+  // Ears behind the head.
+  const ears = side ? [-4] : facing === "up" ? [-16, 16] : [-16.5, 16.5];
+  for (const dx of ears) {
+    ctx.beginPath();
+    ctx.arc(cx + dx, cy + 1, 7, 0, Math.PI * 2);
+    ctx.fillStyle = lit(ctx, fur, cx + dx - 7, cy - 6, cx + dx + 7, cy + 8);
+    ctx.fill();
+    outline(ctx, fur);
+    if (facing !== "up") {
+      ctx.beginPath();
+      ctx.arc(cx + dx * (side ? 1 : 0.97), cy + 1.5, 4.2, 0, Math.PI * 2);
+      ctx.fillStyle = rgba(shade(face, -0.08));
+      ctx.fill();
+    }
+  }
+
+  // Head and tuft.
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, r + 0.5, r, 0, 0, Math.PI * 2);
+  ctx.fillStyle = lit(ctx, fur, cx - r, cy - r, cx + r, cy + r);
+  ctx.fill();
+  outline(ctx, fur);
+  ctx.beginPath();
+  ctx.moveTo(cx - 4, cy - r + 1.5);
+  ctx.quadraticCurveTo(cx - 1, cy - r - 6, cx + 1, cy - r - 3);
+  ctx.quadraticCurveTo(cx + 3, cy - r - 7, cx + 5, cy - r + 1.5);
+  ctx.closePath();
+  ctx.fillStyle = rgba(shade(fur, -0.06));
+  ctx.fill();
+  outline(ctx, fur, 1.1);
+  if (facing === "up") return;
+
+  if (side) {
+    // Profile: pale face toward the front, muzzle sticking out.
+    ctx.beginPath();
+    ctx.ellipse(cx + 6, cy + 1, 8, 9, 0, 0, Math.PI * 2);
+    ctx.fillStyle = lit(ctx, face, cx - 2, cy - 8, cx + 14, cy + 10);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cx + 11, cy + 6, 6.5, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    outline(ctx, face, 1);
+    const open = eyeOpen(time, look.seed);
+    ctx.beginPath();
+    ctx.ellipse(cx + 7, cy - 1, 1.9, Math.max(0.35, 2.6 * open), 0, 0, Math.PI * 2);
+    ctx.fillStyle = rgba(INK);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx + 15.5, cy + 5, 0.9, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+
+  // Face mask: two eye patches merged with the muzzle.
+  ctx.beginPath();
+  ctx.ellipse(cx - 5, cy - 1, 6.2, 6.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx + 5, cy - 1, 6.2, 6.5, 0, 0, Math.PI * 2);
+  ctx.moveTo(cx + 10, cy + 6);
+  ctx.ellipse(cx, cy + 6, 10, 7.5, 0, 0, Math.PI * 2);
+  ctx.fillStyle = lit(ctx, face, cx - 10, cy - 8, cx + 10, cy + 14);
+  ctx.fill();
+
+  const open = eyeOpen(time, look.seed);
+  const lookY = options.lookUp ? -1.6 : 0;
+  for (const dx of [-5, 5]) {
+    const ex = cx + dx;
+    const ey = cy - 0.5 + lookY;
+    ctx.beginPath();
+    ctx.ellipse(ex, ey, 2.2, Math.max(0.35, 2.8 * open), 0, 0, Math.PI * 2);
+    ctx.fillStyle = rgba(INK);
+    ctx.fill();
+    if (open > 0.6) {
+      ctx.beginPath();
+      ctx.arc(ex + 0.7, ey - 1.1, 0.8, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      ctx.fill();
+    }
+  }
+  // Nostrils.
+  ctx.fillStyle = rgba(shade(face, -0.5));
+  for (const dx of [-1.8, 1.8]) {
+    ctx.beginPath();
+    ctx.ellipse(cx + dx, cy + 5, 0.9, 0.7, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Mouth.
+  const my = cy + 9;
+  ctx.beginPath();
+  switch (options.mouth ?? "smile") {
+    case "open":
+      ctx.ellipse(cx, my + 0.5, 2.6, 2.4, 0, 0, Math.PI * 2);
+      ctx.fillStyle = rgba(shade(INK, 0.2));
+      ctx.fill();
+      break;
+    case "grin":
+      ctx.moveTo(cx - 4.5, my - 0.5);
+      ctx.quadraticCurveTo(cx, my + 4, cx + 4.5, my - 0.5);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(120,40,50,0.9)";
+      ctx.fill();
+      break;
+    case "flat":
+      ctx.moveTo(cx - 3, my + 0.5);
+      ctx.lineTo(cx + 3, my + 0.5);
+      ctx.lineWidth = 1.3;
+      ctx.strokeStyle = rgba(INK, 0.75);
+      ctx.stroke();
+      break;
+    default:
+      ctx.moveTo(cx - 3.6, my - 0.4);
+      ctx.quadraticCurveTo(cx, my + 2.8, cx + 3.6, my - 0.4);
+      ctx.lineWidth = 1.3;
+      ctx.strokeStyle = rgba(INK, 0.75);
+      ctx.stroke();
+  }
+}
+
+/** A curled tail from the hip, drawn behind the body. */
+function drawTail(
+  ctx: CanvasRenderingContext2D,
+  look: CharacterLook,
+  x: number,
+  y: number,
+  direction: 1 | -1,
+  time: number,
+) {
+  const sway = Math.sin(time * 2.4 + look.seed) * 2;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.bezierCurveTo(
+    x + direction * 14,
+    y + 2,
+    x + direction * (20 + sway),
+    y - 10,
+    x + direction * (16 + sway),
+    y - 20,
+  );
+  ctx.quadraticCurveTo(
+    x + direction * (12 + sway),
+    y - 26,
+    x + direction * (8 + sway),
+    y - 21,
+  );
+  ctx.lineCap = "round";
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = rgba(shade(look.hair, -0.55), 0.9);
+  ctx.stroke();
+  ctx.lineWidth = 3.8;
+  ctx.strokeStyle = rgba(look.hair);
+  ctx.stroke();
+  ctx.lineCap = "butt";
+}
+
 function drawTorso(
   ctx: CanvasRenderingContext2D,
   look: CharacterLook,
@@ -404,6 +608,24 @@ function drawTorso(
   ctx.fillStyle = lit(ctx, look.shirt, cx - width / 2, top, cx + width / 2, top + height);
   ctx.fill();
   outline(ctx, look.shirt);
+  if (look.monkey) {
+    // A pale belly instead of a shirt.
+    if (facing !== "up") {
+      ctx.beginPath();
+      ctx.ellipse(
+        cx + (facing === "down" ? 0 : 2),
+        top + height * 0.58,
+        width * (facing === "down" ? 0.3 : 0.26),
+        height * 0.34,
+        0,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fillStyle = rgba(shade(look.skin, -0.04));
+      ctx.fill();
+    }
+    return;
+  }
   if (facing === "down") {
     // Collar and lanyard badge.
     ctx.beginPath();
@@ -480,6 +702,11 @@ function drawStanding(
   const top = hip - 27;
   const side = facing === "left" || facing === "right";
 
+  if (look.monkey) {
+    // The tail trails behind: away from the walk, or out to one side.
+    drawTail(ctx, look, side ? -8 : 9, hip - 2, side ? -1 : 1, time);
+  }
+
   if (side) {
     // Far arm and leg, then body, then near arm and leg.
     limb(ctx, 2, top + 5, 18, 6.5, swing * 0.7, shade(look.shirt, -0.18), { color: shade(look.skin, -0.12), radius: 3.2 });
@@ -516,6 +743,8 @@ function drawSeated(
   const headY = top - 13 + (mode === "typing" ? Math.sin(t * 7) * 0.35 : 0);
   const tilt =
     mode === "thinking" ? 0.13 : mode === "typing" ? Math.sin(t * 0.7) * 0.04 : 0;
+
+  if (look.monkey) drawTail(ctx, look, 11, -4, 1, time);
 
   // Arms behind the body first, so the torso overlaps their roots.
   const stretch = mode === "relaxed" && t % 9 < 2.6;

@@ -3,6 +3,7 @@ import type { ProjectGroup } from "../../projects/model/projectGroups";
 import { projectGroupIdForPath } from "../../projects/model/projectGroups";
 import { isInFlightSession } from "../../sessions/model/inFlight";
 import { liveAgentsFromSessions } from "../../sessions/model/liveAgents";
+import type { ProjectUnread } from "../../sessions/model/projectUnread";
 import type { Block, Session } from "../../sessions/model/session";
 
 /**
@@ -27,6 +28,10 @@ export type OfficeDesk = {
   agents: number;
   /** Finished conversations the user has not opened since. */
   updates: number;
+  /** Unread replies plus questions waiting on the user, for the badge. */
+  unread: number;
+  /** Fur color when the project's mascot is the monkey: a monkey takes the desk. */
+  monkeyFur?: string;
   /** What the most relevant agent is doing, for the desk's tooltip. */
   activity?: string;
   /** The conversation a click on the desk opens. */
@@ -81,8 +86,17 @@ export type OfficeInput = {
   assignments: Record<string, string>;
   sessions: Session[];
   unseenFinishedIds: ReadonlySet<string>;
+  /**
+   * Unread work per project path key, including conversations that are no
+   * longer open in a tab. Overrides what the live sessions alone can tell.
+   */
+  unread?: ReadonlyMap<string, ProjectUnread>;
   /** Display name and color for a project path. */
-  appearance: (path: string) => { name?: string; color: string };
+  appearance: (path: string) => {
+    name?: string;
+    color: string;
+    monkeyFur?: string;
+  };
   groupColor: (group: ProjectGroup) => string;
 };
 
@@ -101,6 +115,8 @@ export function buildOfficeZones(input: OfficeInput): OfficeZone[] {
       status: "offline",
       agents: 0,
       updates: 0,
+      unread: 0,
+      ...(look.monkeyFur ? { monkeyFur: look.monkeyFur } : {}),
     });
   }
 
@@ -137,6 +153,24 @@ export function buildOfficeZones(input: OfficeInput): OfficeZone[] {
         desk.sessionId ??= session.id;
         desk.activity ??= "Finished";
       }
+    }
+  }
+  for (const desk of desks.values()) {
+    if (!input.unread) {
+      desk.unread = desk.updates;
+      continue;
+    }
+    const unread = input.unread.get(desk.key);
+    desk.unread = unread?.count ?? 0;
+    desk.updates = unread?.replies ?? 0;
+    if (desk.status === "updates" && !desk.updates) {
+      desk.status = "offline";
+      desk.sessionId = undefined;
+      desk.activity = undefined;
+    } else if (desk.status === "offline" && desk.updates) {
+      desk.status = "updates";
+      desk.sessionId = unread?.sessionId;
+      desk.activity = "Finished";
     }
   }
 

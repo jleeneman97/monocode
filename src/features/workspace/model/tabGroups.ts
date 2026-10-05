@@ -332,6 +332,20 @@ export function resolveTabGroupColor(
   return tabGroupColor(fallbackKey || project);
 }
 
+/**
+ * True while the project shows its automatic color: nothing picked from the
+ * swatches and no custom color. Mascots with their own colors show them then.
+ */
+export function usesAutomaticTabGroupColor(
+  project: string,
+  overrides?: Record<string, number>,
+  customOverrides?: Record<string, string>,
+): boolean {
+  if (resolveTabGroupCustomColor(project, customOverrides)) return false;
+  const index = overrides?.[project];
+  return !(index != null && index >= 0 && index < TAB_GROUP_COLORS.length);
+}
+
 export function resolveTabGroupCustomColor(
   project: string,
   overrides?: Record<string, string>,

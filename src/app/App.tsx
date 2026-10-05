@@ -470,6 +470,7 @@ import { liveAgentsFromSessions } from "../features/sessions/model/liveAgents";
 import { hiddenApprovalNotices } from "../features/notifications/model/approvalToast";
 import { useSessionReminders } from "../features/notifications/hooks/useSessionReminders";
 import { ReminderNotices } from "../features/sessions/ui/ReminderNotices";
+import { projectUnreadCounts } from "../features/sessions/model/projectUnread";
 import { nextUnseenFinishedSessions } from "../features/sessions/model/sessionDone";
 import {
   loadNotificationsEnabled,
@@ -1719,29 +1720,43 @@ function Workspace({
   const activeSessionIdRef = useRef(activeSessionId);
   activeSessionIdRef.current = activeSessionId;
 
-  useInputNotifications(sessions, activeSessionId);
+  // A finished turn only counts as seen when its chat is on screen. Behind
+  // the Office, Search, Notes, Automations, or Settings it is still news.
+  const workspaceCovered =
+    searchViewOpen ||
+    notesViewOpen ||
+    automationsViewOpen ||
+    officeViewOpen ||
+    settingsOpen;
+  const seenSessionId = workspaceCovered ? undefined : activeSessionId;
+
+  useInputNotifications(sessions, seenSessionId);
 
   // Cache the OS decision so a turn ending later can skip a denied banner.
   useEffect(() => {
     if (loadNotificationsEnabled()) void probeNotificationPermission();
   }, []);
   const busyForDoneRef = useRef(busySessionIds);
-  const focusedForDoneRef = useRef(activeSessionId);
+  const focusedForDoneRef = useRef(seenSessionId);
   const unseenFinishedRef = useRef<Set<string>>(new Set());
   if (
     busyForDoneRef.current !== busySessionIds ||
-    focusedForDoneRef.current !== activeSessionId
+    focusedForDoneRef.current !== seenSessionId
   ) {
     unseenFinishedRef.current = nextUnseenFinishedSessions({
       previousBusyIds: busyForDoneRef.current,
       busyIds: busySessionIds,
       previousUnseenIds: unseenFinishedRef.current,
-      focusedSessionId: activeSessionId,
+      focusedSessionId: seenSessionId,
     });
     busyForDoneRef.current = busySessionIds;
-    focusedForDoneRef.current = activeSessionId;
+    focusedForDoneRef.current = seenSessionId;
   }
   const unseenFinishedIds = unseenFinishedRef.current;
+  const projectUnread = useMemo(
+    () => projectUnreadCounts(sessions, unseenFinishedIds, history),
+    [sessions, unseenFinishedIds, history],
+  );
 
   const liveAgents = useMemo(
     () =>
@@ -10866,6 +10881,7 @@ function Workspace({
               titleBarAbove={compactTitleBar}
               onToggleProjectRail={onToggleProjectRail}
               unseenFinishedIds={unseenFinishedIds}
+              projectUnread={projectUnread}
               inboxUnseen={inboxUnseen}
               linkedSessionUpdateIds={linkedSessionUpdateIds}
               settingsOpen={settingsOpen}
@@ -11173,6 +11189,7 @@ function Workspace({
                   recents={recents}
                   sessions={sessions}
                   unseenFinishedIds={unseenFinishedIds}
+                  projectUnread={projectUnread}
                   onClose={onLeaveOffice}
                   onToggleSidebar={onToggleSidebar}
                   onOpenSession={onSelectLiveAgent}

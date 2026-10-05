@@ -10,6 +10,7 @@ import {
   resolveTabGroupColor,
   resolveTabGroupLogo,
   resolveTabGroupMascot,
+  usesAutomaticTabGroupColor,
 } from "../../workspace/model/tabGroups";
 
 export function loadQuickProjectAppearance() {
@@ -57,6 +58,11 @@ export function QuickProjectIcon({
         appearance.colors,
         appearance.customColors,
         seed,
+      )}
+      multicolor={usesAutomaticTabGroupColor(
+        key,
+        appearance.colors,
+        appearance.customColors,
       )}
       className={className}
     />

@@ -108,6 +108,7 @@ import {
   resolveTabGroupLabel,
   resolveTabGroupLogo,
   resolveTabGroupMascot,
+  usesAutomaticTabGroupColor,
 } from "../../workspace/model/tabGroups";
 
 type Props = {
@@ -541,6 +542,7 @@ function AutomationCard({
               project={seed}
               color={mascotColor}
               name={mascotName}
+              multicolor={usesAutomaticTabGroupColor(key, colors, customColors)}
               className="size-3 shrink-0"
             />
           )}

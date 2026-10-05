@@ -22,6 +22,7 @@ import {
   resolveTabGroupColor,
   resolveTabGroupLogo,
   resolveTabGroupMascot,
+  usesAutomaticTabGroupColor,
 } from "../../workspace/model/tabGroups";
 import type { RecentProject } from "../../projects/model/recents";
 
@@ -267,6 +268,11 @@ export function ProjectNotificationSettings({
                                   seed,
                                 )}
                                 name={resolveTabGroupMascot(key, groupMascots)}
+                                multicolor={usesAutomaticTabGroupColor(
+                                  key,
+                                  groupColors,
+                                  groupCustomColors,
+                                )}
                                 className="size-3"
                               />
                             ) : (

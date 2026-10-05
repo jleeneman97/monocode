@@ -51,11 +51,14 @@ type Board = {
 };
 
 /**
- * Mascot art, traced once over its 8×8 box so each frame is a single fill.
+ * Mascot art, traced once over its own grid so each frame is a single fill.
  * Traced on first paint rather than at import, so nothing needs a canvas
  * around just to pull this module in.
  */
-const mascotPaths = new Map<string, { rest: Path2D; talk: Path2D }>();
+const mascotPaths = new Map<
+  string,
+  { rest: Path2D; talk: Path2D; grid: number }
+>();
 
 function mascotArt(name: string) {
   const cached = mascotPaths.get(name);
@@ -65,6 +68,7 @@ function mascotArt(name: string) {
   const art = {
     rest: new Path2D(mascot.restPath),
     talk: new Path2D(mascot.talkPath),
+    grid: mascot.grid,
   };
   mascotPaths.set(name, art);
   return art;
@@ -111,7 +115,7 @@ function drawPacman(
   ctx.fill();
 }
 
-/** The mascot's own pixel art, scaled up out of its 8×8 box. */
+/** The mascot's own pixel art, scaled up out of its grid. */
 function drawGhost(
   ctx: CanvasRenderingContext2D,
   sprite: ArcadeSprite,
@@ -142,9 +146,11 @@ function drawGhost(
 
   const art = sprite.mascot ? mascotArt(sprite.mascot) : null;
   if (!art) return;
+  // Larger art keeps the same footprint, drawn at a finer pixel.
+  const artUnit = span / art.grid;
   ctx.save();
   ctx.translate(left, top);
-  ctx.scale(unit, unit);
+  ctx.scale(artUnit, artUnit);
   ctx.fill(sprite.frame === "talk" ? art.talk : art.rest);
   ctx.restore();
 }

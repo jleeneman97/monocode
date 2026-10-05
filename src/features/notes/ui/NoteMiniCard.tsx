@@ -15,6 +15,7 @@ import {
   resolveTabGroupColor,
   resolveTabGroupLogo,
   resolveTabGroupMascot,
+  usesAutomaticTabGroupColor,
 } from "../../workspace/model/tabGroups";
 
 type Props = {
@@ -69,6 +70,9 @@ export function NoteMiniCard({ card, onDismiss, embedded = false }: Props) {
                 project={project}
                 color={mascotColor}
                 name={mascotName}
+                multicolor={
+                  !!key && usesAutomaticTabGroupColor(key, colors, customColors)
+                }
                 className="size-3 shrink-0"
               />
             )}

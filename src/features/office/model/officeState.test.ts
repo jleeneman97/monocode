@@ -97,6 +97,31 @@ describe("buildOfficeZones", () => {
     expect(officeStatusLabel(blog)).toBe("2 new updates");
   });
 
+  it("keeps a worker at the desk for unread work from closed conversations", () => {
+    const desks = buildOfficeZones({
+      projects: [{ path: "/work/api" }, { path: "/work/blog" }],
+      groups: [],
+      assignments: {},
+      sessions: [],
+      unseenFinishedIds: new Set(["gone"]),
+      unread: new Map([
+        ["/work/api", { replies: 2, questions: 0, count: 2, sessionId: "gone" }],
+      ]),
+      appearance: () => ({ color: "#fff" }),
+      groupColor: () => "#000",
+    }).flatMap((zone) => zone.desks);
+    expect(desks.find((desk) => desk.name === "api")).toMatchObject({
+      status: "updates",
+      updates: 2,
+      unread: 2,
+      sessionId: "gone",
+    });
+    expect(desks.find((desk) => desk.name === "blog")).toMatchObject({
+      status: "offline",
+      unread: 0,
+    });
+  });
+
   it("ignores inbox asks and orchestration workers", () => {
     const desks = zones([
       session("a", "/work/api", { busy: true, inboxAsk: {} as Session["inboxAsk"] }),

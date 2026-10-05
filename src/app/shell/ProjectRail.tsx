@@ -57,16 +57,19 @@ import {
   resolveTabGroupLabel,
   resolveTabGroupLogo,
   resolveTabGroupMascot,
+  usesAutomaticTabGroupColor,
 } from "../../features/workspace/model/tabGroups";
 import {
   loadProjectGroupAssignments,
   loadProjectGroups,
+  type ProjectGroup,
   projectGroupColor,
   projectGroupIdForPath,
+  projectGroupUsesAutomaticColor,
   updateProjectGroup,
-  type ProjectGroup,
 } from "../../features/projects/model/projectGroups";
 import type { LiveAgent } from "../../features/sessions/model/liveAgents";
+import type { ProjectUnread } from "../../features/sessions/model/projectUnread";
 import { LiveAgentsPreview } from "../../features/sessions/ui/LiveAgentsPreview";
 import { ProjectLogoIcon } from "../../features/projects/ui/ProjectLogoIcon";
 import { ProjectMascot } from "../../features/projects/ui/ProjectMascot";
@@ -97,6 +100,8 @@ type Props = {
   recents: RecentProject[];
   inboxUnseen?: boolean;
   busyPaths?: Iterable<string>;
+  /** Unread replies and waiting questions per project, by path key. */
+  unread?: ReadonlyMap<string, ProjectUnread>;
   canGoBack?: boolean;
   canGoForward?: boolean;
   onGoBack?: () => void;
@@ -136,6 +141,7 @@ export function ProjectRail({
   recents,
   inboxUnseen = false,
   busyPaths,
+  unread = NO_UNREAD,
   canGoBack = false,
   canGoForward = false,
   onGoBack,
@@ -429,6 +435,7 @@ export function ProjectRail({
                 muteStatuses={muteStatuses}
                 cwd={cwd}
                 busy={busy}
+                unread={unread}
                 statsEnabled={visible}
                 sortable={pinnedSortable}
                 pinned
@@ -466,6 +473,7 @@ export function ProjectRail({
                       muteStatuses={muteStatuses}
                       cwd={cwd}
                       busy={busy}
+                      unread={unread}
                       statsEnabled={visible}
                       searchActive={
                         searchActive ||
@@ -511,6 +519,7 @@ export function ProjectRail({
               onAdd={onOpenProject}
               cwd={cwd}
               busy={busy}
+              unread={unread}
               statsEnabled={visible}
               sortable={projectSortable}
               pinned={false}
@@ -597,6 +606,7 @@ function ProjectSection({
   onAdd,
   cwd,
   busy,
+  unread,
   statsEnabled,
   sortable,
   pinned,
@@ -618,6 +628,7 @@ function ProjectSection({
   onAdd?: () => void;
   cwd: string;
   busy: Set<string>;
+  unread: ReadonlyMap<string, ProjectUnread>;
   statsEnabled: boolean;
   sortable: SortableHandle;
   pinned: boolean;
@@ -648,6 +659,7 @@ function ProjectSection({
             muteStatus={muteStatuses.get(pathKey(item.path)) ?? undefined}
             selected={!searchActive && sameProjectPath(item.path, cwd)}
             busy={isBusyPath(item.path, busy)}
+            unread={unread.get(pathKey(item.path))?.count ?? 0}
             statsEnabled={statsEnabled}
             pinned={pinned}
             sortable={sortable}
@@ -706,6 +718,7 @@ function ProjectGroupSection({
   muteStatuses,
   cwd,
   busy,
+  unread,
   statsEnabled,
   searchActive,
   onSelect,
@@ -726,6 +739,7 @@ function ProjectGroupSection({
   muteStatuses: ReadonlyMap<string, string | null>;
   cwd: string;
   busy: Set<string>;
+  unread: ReadonlyMap<string, ProjectUnread>;
   statsEnabled: boolean;
   searchActive: boolean;
   onSelect: (path: string) => void;
@@ -789,6 +803,7 @@ function ProjectGroupSection({
                     project={group.id}
                     color={projectGroupColor(group)}
                     name={group.mascot ?? null}
+                    multicolor={projectGroupUsesAutomaticColor(group)}
                     className="size-3"
                   />
                 </span>
@@ -833,6 +848,7 @@ function ProjectGroupSection({
               muteStatus={muteStatuses.get(pathKey(item.path)) ?? undefined}
               selected={!searchActive && sameProjectPath(item.path, cwd)}
               busy={isBusyPath(item.path, busy)}
+              unread={unread.get(pathKey(item.path))?.count ?? 0}
               statsEnabled={statsEnabled}
               pinned={false}
               sortable={sortable}
@@ -861,6 +877,7 @@ function ProjectCard({
   muteStatus,
   selected,
   busy,
+  unread,
   statsEnabled,
   pinned,
   sortable,
@@ -878,6 +895,8 @@ function ProjectCard({
   muteStatus?: string;
   selected: boolean;
   busy: boolean;
+  /** Unread replies plus questions waiting on the user. */
+  unread: number;
   statsEnabled: boolean;
   pinned: boolean;
   sortable: SortableHandle;
@@ -918,19 +937,32 @@ function ProjectCard({
         : online
           ? "Connected"
           : "Reconnecting";
-  const cardTitle = projectCardTitle(
-    remote
-      ? `${remote.cwd} on ${machine?.name ?? "another machine"} (${connection})`
-      : item.path,
-    name,
-    stats,
-    busy,
-  );
-  const cardAriaLabel = projectCardAriaLabel(
-    machine ? `${name} on ${machine.name}` : name,
-    stats,
-    busy,
-  );
+  const unreadLabel = unread
+    ? `${unread} unread ${unread === 1 ? "update" : "updates"}`
+    : "";
+  const cardTitle = [
+    projectCardTitle(
+      remote
+        ? `${remote.cwd} on ${machine?.name ?? "another machine"} (${connection})`
+        : item.path,
+      name,
+      stats,
+      busy,
+    ),
+    unreadLabel,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const cardAriaLabel = [
+    projectCardAriaLabel(
+      machine ? `${name} on ${machine.name}` : name,
+      stats,
+      busy,
+    ),
+    unreadLabel,
+  ]
+    .filter(Boolean)
+    .join(", ");
   const labelClassName = machine
     ? "min-w-0 max-w-[75%] shrink-0 truncate text-sm font-medium leading-tight"
     : nameClassName;
@@ -989,6 +1021,11 @@ function ProjectCard({
               project={seed}
               color={color}
               name={resolveTabGroupMascot(key, groupMascots)}
+              multicolor={usesAutomaticTabGroupColor(
+                key,
+                groupColors,
+                groupCustomColors,
+              )}
               className="size-3"
               active={busy}
             />
@@ -1006,6 +1043,7 @@ function ProjectCard({
             {machine.name}
           </span>
         ) : null}
+        {unread ? <UnreadBadge count={unread} /> : null}
         {hasChanges ? (
           <span className="project-card-stats shrink-0 group-hover:hidden group-has-[:focus-visible]:hidden">
             <ProjectDiffStat additions={additions} deletions={deletions} />
@@ -1076,6 +1114,20 @@ function ProjectCard({
         )}
       </button>
     </div>
+  );
+}
+
+const NO_UNREAD: ReadonlyMap<string, ProjectUnread> = new Map();
+
+/** Round count of what the project's agents left unread. */
+function UnreadBadge({ count }: { count: number }) {
+  return (
+    <span
+      aria-hidden
+      className="grid h-4 min-w-4 shrink-0 place-items-center rounded-full bg-red-500 px-1 text-[10px] font-semibold leading-none tabular-nums text-white shadow-[0_1px_3px_rgba(0,0,0,0.35)]"
+    >
+      {count > 99 ? "99+" : count}
+    </span>
   );
 }
 

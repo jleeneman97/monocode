@@ -910,6 +910,8 @@ function BankedResetMascot({
 }) {
   const mascot = projectMascot(project, name);
   const spritePath = `${mascot.restPath}${mascotFacePlatePath(mascot.rest)}`;
+  // The mood face is drawn on an 8×8 grid; finer art scales down to meet it.
+  const spriteScale = `scale(${8 / mascot.grid})`;
   const maskId = `banked-reset-mascot-${useId().replace(/:/g, "")}`;
   return (
     <div
@@ -937,7 +939,7 @@ function BankedResetMascot({
             height="8"
           >
             <rect width="8" height="8" fill="black" />
-            <path d={spritePath} fill="white" />
+            <path d={spritePath} transform={spriteScale} fill="white" />
             <g fill="black">
               <rect x="2" y="3" width="1" height="1" />
               <rect x="5" y="3" width="1" height="1" />
@@ -947,7 +949,12 @@ function BankedResetMascot({
             </g>
           </mask>
         </defs>
-        <path d={spritePath} fill="currentColor" mask={`url(#${maskId})`} />
+        <path
+          d={spritePath}
+          transform={spriteScale}
+          fill="currentColor"
+          mask={`url(#${maskId})`}
+        />
       </svg>
     </div>
   );
@@ -955,9 +962,11 @@ function BankedResetMascot({
 
 /** Fill only the middle of each face row before cutting the mood back out. */
 function mascotFacePlatePath(rows: readonly string[]): string {
+  // Rows 2–5 of an 8×8 sprite; the same band on finer grids.
+  const step = rows.length / 8;
   return mascotPath(
     rows.map((row, y) => {
-      if (y < 2 || y > 5) return ".".repeat(row.length);
+      if (y < 2 * step || y >= 6 * step) return ".".repeat(row.length);
       const first = row.indexOf("#");
       const last = row.lastIndexOf("#");
       if (first < 0) return ".".repeat(row.length);

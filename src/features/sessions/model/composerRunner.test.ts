@@ -5,6 +5,7 @@ import {
   COIN_GAP_MAX_MS,
   COIN_GAP_MIN_MS,
   COIN_HOVER,
+  COIN_SIZE,
   CRASH_RECOIL_MS,
   CRASH_RECOIL_PX,
   CRASH_SHAKE_MS,
@@ -25,7 +26,9 @@ import {
   pingPong,
   poseAt,
   recoilAlong,
+  runnerPickupFor,
   runnerPose,
+  runnerSizesFor,
   runnerTrack,
   scaleTrackX,
   spriteClipBottom,
@@ -254,5 +257,39 @@ describe("composerRunner", () => {
     expect(pose.x).toBe(RUNNER_INSET + 50);
     expect(pose.facing).toBe(1);
     expect(pose.y).toBe(0);
+  });
+});
+
+describe("monkey runner sizes", () => {
+  it("runs the monkey and its banana at one and a half times the size", () => {
+    expect(runnerSizesFor("monkey")).toEqual({
+      runner: RUNNER_SIZE * 1.5,
+      pickup: COIN_SIZE * 1.5,
+      hover: COIN_HOVER + RUNNER_SIZE / 2 + COIN_SIZE / 4,
+      inset: RUNNER_INSET + RUNNER_SIZE / 4,
+    });
+    expect(runnerSizesFor("ghost")).toEqual({
+      runner: RUNNER_SIZE,
+      pickup: COIN_SIZE,
+      hover: COIN_HOVER,
+      inset: RUNNER_INSET,
+    });
+    expect(runnerPickupFor("monkey")).toBe("banana");
+    expect(runnerPickupFor("ghost")).toBe("coin");
+  });
+
+  it("makes the big monkey jump for a big banana, then catches it", () => {
+    const { runner, pickup, hover } = runnerSizesFor("monkey");
+    const banana = { id: 1, x: 100, height: hover, size: pickup, runner };
+    // Out of reach while walking past...
+    expect(
+      coinCollected({ x: 100, y: 0, facing: 1, airborne: false }, banana),
+    ).toBe(false);
+    // ...and caught at the top of the hop it triggers.
+    const peak = jumpHeight(100, null, [banana]);
+    expect(peak).toBeGreaterThan(0);
+    expect(
+      coinCollected({ x: 100, y: peak, facing: 1, airborne: true }, banana),
+    ).toBe(true);
   });
 });

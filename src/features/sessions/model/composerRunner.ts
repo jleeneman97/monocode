@@ -62,6 +62,103 @@ export const COIN_EDGE_PATH = mascotPath([
   "........",
 ]);
 
+/**
+ * The monkey's take on a coin: a banana on a 16×16 grid, face on and edge on
+ * for the spin. 'y' peel, 'h' highlight, 's' shade, 'o' outline, 't' tip,
+ * 'g'/'G' stem.
+ */
+export const BANANA_GRID = 16;
+
+const BANANA_FACE = [
+  "...........oo...",
+  "..........oGGo..",
+  "..........ogGo..",
+  ".........ohyso..",
+  ".........ohyyso.",
+  ".........ohyyso.",
+  "........ohhyyso.",
+  "........ohyyyso.",
+  ".......ohhyyso..",
+  "......ohhyyyso..",
+  "....oohhyyyso...",
+  ".oothhyyyyso....",
+  "ottyyyyyyso.....",
+  ".ooyyyyssoo.....",
+  "...ooooo........",
+  "................",
+];
+
+const BANANA_EDGE = [
+  ".......oo.......",
+  "......oGGo......",
+  "......ogGo......",
+  "......ohyo......",
+  "......ohyso.....",
+  "......ohyso.....",
+  "......ohyso.....",
+  "......ohyso.....",
+  "......ohyso.....",
+  "......ohyso.....",
+  "......ohyso.....",
+  ".....ohyyso.....",
+  ".....otyso......",
+  "......ooo.......",
+  "................",
+  "................",
+];
+
+const BANANA_COLORS: Record<string, string> = {
+  o: "#54341a",
+  t: "#3c2610",
+  y: "#ffd63a",
+  h: "#fff4a0",
+  s: "#de9814",
+  g: "#7a8c34",
+  G: "#546422",
+};
+
+function bananaLayers(rows: readonly string[]) {
+  return Object.entries(BANANA_COLORS).map(([letter, fill]) => ({
+    fill,
+    path: mascotPath(rows, letter),
+  }));
+}
+
+export const BANANA_FACE_LAYERS = bananaLayers(BANANA_FACE);
+export const BANANA_EDGE_LAYERS = bananaLayers(BANANA_EDGE);
+
+/** Mascots that collect something other than coins. */
+export function runnerPickupFor(mascot: string): "coin" | "banana" {
+  return mascot === "monkey" ? "banana" : "coin";
+}
+
+export type RunnerSizes = {
+  /** Sprite size in px. */
+  runner: number;
+  /** Coin (or banana) size in px. */
+  pickup: number;
+  /** How high above the rim pickups float, so the sprite still jumps for them. */
+  hover: number;
+  /** Turnaround distance from the box edges, so a larger sprite stays inside. */
+  inset: number;
+};
+
+/**
+ * The monkey's art is twice as fine, so it runs half again as large, after a
+ * banana half again the size of a coin. Everything else keeps the classic sizes.
+ */
+export function runnerSizesFor(mascot: string): RunnerSizes {
+  const scale = mascot === "monkey" ? 1.5 : 1;
+  const runner = RUNNER_SIZE * scale;
+  const pickup = COIN_SIZE * scale;
+  return {
+    runner,
+    pickup,
+    hover: COIN_HOVER + (runner - RUNNER_SIZE) + (pickup - COIN_SIZE) / 2,
+    inset: RUNNER_INSET + (runner - RUNNER_SIZE) / 2,
+  };
+}
+
 export const STAR_FACE_PATH = mascotPath([
   "...##...",
   "...##...",
@@ -106,6 +203,10 @@ export type Coin = {
   x: number;
   /** How high the mascot must jump to grab it. */
   height: number;
+  /** Pickup size in px; the classic coin when absent. */
+  size?: number;
+  /** Size of the sprite chasing it; the classic runner when absent. */
+  runner?: number;
 };
 
 export type RunnerPose = {
@@ -144,7 +245,7 @@ function arc(
 
 /** Feet peak so the sprite's body meets the coin instead of its shoes. */
 export function coinJumpPeak(coin: Coin): number {
-  return Math.max(0, coin.height - RUNNER_SIZE / 2);
+  return Math.max(0, coin.height - (coin.runner ?? RUNNER_SIZE) / 2);
 }
 
 /** Mario parabola: 0 at the ends, `height` at the midpoint. */
@@ -157,12 +258,13 @@ export function jumpHeight(
     ? arc(x, obstacle.left, obstacle.right, obstacle.height)
     : 0;
   for (const coin of coins) {
+    const width = COIN_WIDTH * ((coin.size ?? COIN_SIZE) / COIN_SIZE);
     height = Math.max(
       height,
       arc(
         x,
-        coin.x - COIN_WIDTH / 2,
-        coin.x + COIN_WIDTH / 2,
+        coin.x - width / 2,
+        coin.x + width / 2,
         coinJumpPeak(coin),
         COIN_JUMP_LEAD,
       ),
@@ -232,9 +334,10 @@ export function hitsChevron(
   facing: 1 | -1,
   obstacle: Obstacle | null,
   learned: boolean,
+  size = RUNNER_SIZE,
 ): boolean {
   if (learned || !obstacle || y > 0.5) return false;
-  const half = RUNNER_SIZE / 2;
+  const half = size / 2;
   if (facing === 1) {
     return x + half >= obstacle.left && x - half < obstacle.right;
   }
@@ -270,13 +373,14 @@ export function stunDone(elapsedMs: number): boolean {
 /** Pixel stars orbiting the sprite while it is stunned. Offsets are from the sprite top-left. */
 export function stunStars(
   elapsedMs: number,
+  size = RUNNER_SIZE,
 ): { dx: number; dy: number; opacity: number }[] {
   if (elapsedMs < 0 || elapsedMs >= CRASH_STUN_MS) return [];
   const fadeAt = CRASH_STUN_MS - 140;
   const opacity =
     elapsedMs < fadeAt ? 1 : Math.max(0, 1 - (elapsedMs - fadeAt) / 140);
-  const originX = (RUNNER_SIZE - STAR_SIZE) / 2;
-  const originY = (RUNNER_SIZE - STAR_SIZE) / 2 - 5;
+  const originX = (size - STAR_SIZE) / 2;
+  const originY = (size - STAR_SIZE) / 2 - 5;
   const angle = (elapsedMs / STAR_SPIN_MS) * Math.PI * 2;
   const stars: { dx: number; dy: number; opacity: number }[] = [];
   for (let i = 0; i < STAR_COUNT; i++) {
@@ -291,11 +395,13 @@ export function stunStars(
 }
 
 export function coinCollected(pose: RunnerPose, coin: Coin): boolean {
-  if (Math.abs(pose.x - coin.x) > COLLECT_X) return false;
-  const mascotTop = pose.y + RUNNER_SIZE;
+  const runner = coin.runner ?? RUNNER_SIZE;
+  const size = coin.size ?? COIN_SIZE;
+  if (Math.abs(pose.x - coin.x) > COLLECT_X * (runner / RUNNER_SIZE)) return false;
+  const mascotTop = pose.y + runner;
   const mascotBottom = pose.y;
-  const coinTop = coin.height + COIN_SIZE / 2;
-  const coinBottom = coin.height - COIN_SIZE / 2;
+  const coinTop = coin.height + size / 2;
+  const coinBottom = coin.height - size / 2;
   return mascotTop >= coinBottom && mascotBottom <= coinTop;
 }
 

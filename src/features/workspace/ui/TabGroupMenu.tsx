@@ -310,7 +310,7 @@ export function TabGroupMenu({
 
         <div className="mb-2 px-0.5">
           <p className="mb-1 text-[11px] text-content/50">Mascot</p>
-          <div className="flex items-center justify-between gap-1">
+          <div className="flex items-center justify-between gap-0.5">
             {PROJECT_MASCOTS.map((mascot) => (
               <MascotSwatch
                 key={mascot.name}
@@ -322,6 +322,8 @@ export function TabGroupMenu({
                   project={groupId}
                   name={mascot.name}
                   className="size-3 text-content/75"
+                  // A mascot with its own colors shows them until a color is picked.
+                  multicolor={colorIndex == null && customColor == null}
                 />
               </MascotSwatch>
             ))}

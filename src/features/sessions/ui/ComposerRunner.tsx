@@ -1,13 +1,16 @@
 import { useLayoutEffect, useMemo, useRef, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
+  BANANA_EDGE_LAYERS,
+  BANANA_FACE_LAYERS,
+  BANANA_GRID,
   COIN_EDGE_PATH,
   COIN_FACE_PATH,
-  COIN_HOVER,
   COIN_SIZE,
   COLLECT_POP_MS,
   COLLECT_POP_PX,
   EXIT_MS,
+  EXIT_PEAK,
   EXIT_SINK,
   STAR_COUNT,
   STAR_EDGE_PATH,
@@ -20,7 +23,6 @@ import {
   nextCoinDelay,
   obstacleFromRects,
   pickCoinX,
-  RUNNER_INSET,
   RUNNER_SIZE,
   poseAt,
   recoilAlong,
@@ -34,6 +36,8 @@ import {
   type Coin,
   type Obstacle,
   type RunnerTrack,
+  runnerPickupFor,
+  runnerSizesFor,
 } from "../model/composerRunner";
 import { projectKey, projectName } from "../../../shared/lib/paths";
 import {
@@ -42,8 +46,10 @@ import {
   loadTabGroupMascots,
   resolveTabGroupColor,
   resolveTabGroupMascot,
+  usesAutomaticTabGroupColor,
 } from "../../workspace/model/tabGroups";
 import { ProjectMascot } from "../../projects/ui/ProjectMascot";
+import { projectMascot } from "../../projects/model/projectMascots";
 
 type Props = {
   boxRef: RefObject<HTMLElement | null>;
@@ -58,7 +64,10 @@ type LiveCoin = Coin & {
   collectedAt: number | null;
 };
 
-const COIN_SVG = `<svg viewBox="0 0 8 8" width="${COIN_SIZE}" height="${COIN_SIZE}" shape-rendering="crispEdges" fill="#e8b923" aria-hidden="true"><path class="composer-coin-face" d="${COIN_FACE_PATH}"/><path class="composer-coin-edge" d="${COIN_EDGE_PATH}"/></svg>`;
+const COIN_SVG = `<svg viewBox="0 0 8 8" width="100%" height="100%" shape-rendering="crispEdges" fill="#e8b923" aria-hidden="true"><path class="composer-coin-face" d="${COIN_FACE_PATH}"/><path class="composer-coin-edge" d="${COIN_EDGE_PATH}"/></svg>`;
+const layerPaths = (layers: { fill: string; path: string }[]) =>
+  layers.map((layer) => `<path fill="${layer.fill}" d="${layer.path}"/>`).join("");
+const BANANA_SVG = `<svg viewBox="0 0 ${BANANA_GRID} ${BANANA_GRID}" width="100%" height="100%" shape-rendering="crispEdges" aria-hidden="true"><g class="composer-coin-face">${layerPaths(BANANA_FACE_LAYERS)}</g><g class="composer-coin-edge">${layerPaths(BANANA_EDGE_LAYERS)}</g></svg>`;
 const STAR_SVG = `<svg viewBox="0 0 8 8" width="${STAR_SIZE}" height="${STAR_SIZE}" shape-rendering="crispEdges" fill="#f4e27a" aria-hidden="true"><path class="composer-coin-face" d="${STAR_FACE_PATH}"/><path class="composer-coin-edge" d="${STAR_EDGE_PATH}"/></svg>`;
 const GEOMETRY_SAMPLE_MS = 100;
 
@@ -92,8 +101,22 @@ export function ComposerRunner({
         loadTabGroupCustomColors(),
         project,
       ),
+      multicolor: usesAutomaticTabGroupColor(
+        key,
+        loadTabGroupColors(),
+        loadTabGroupCustomColors(),
+      ),
     };
   }, [key, project]);
+  const mascotName = projectMascot(project, appearance.name).name;
+  const pickupSvg =
+    runnerPickupFor(mascotName) === "banana" ? BANANA_SVG : COIN_SVG;
+  const sizes = runnerSizesFor(mascotName);
+  // Read each frame, so a mascot change mid-turn swaps size and pickup.
+  const pickupRef = useRef(pickupSvg);
+  pickupRef.current = pickupSvg;
+  const sizesRef = useRef(sizes);
+  sizesRef.current = sizes;
 
   useLayoutEffect(() => {
     const layer = layerRef.current;
@@ -155,16 +178,20 @@ export function ComposerRunner({
       shakeX = 0,
       shakeY = 0,
     ) => {
+      const size = sizesRef.current.runner;
       sprite.style.setProperty(
         "--runner-x",
-        `${Math.round(boxLeft + x - RUNNER_SIZE / 2 + shakeX)}px`,
+        `${Math.round(boxLeft + x - size / 2 + shakeX)}px`,
       );
       sprite.style.setProperty(
         "--runner-y",
-        `${Math.round(boxTop - RUNNER_SIZE - y + 1 + shakeY)}px`,
+        `${Math.round(boxTop - size - y + 1 + shakeY)}px`,
       );
       sprite.style.setProperty("--runner-facing", String(facing));
-      sprite.style.setProperty("--runner-clip", `${spriteClipBottom(y)}px`);
+      sprite.style.setProperty(
+        "--runner-clip",
+        `${spriteClipBottom(y, size)}px`,
+      );
     };
 
     const hideStars = () => {
@@ -180,9 +207,10 @@ export function ComposerRunner({
       shakeX = 0,
       shakeY = 0,
     ) => {
-      const spriteLeft = boxLeft + x - RUNNER_SIZE / 2 + shakeX;
-      const spriteTop = boxTop - RUNNER_SIZE - y + 1 + shakeY;
-      const poses = stunStars(elapsed);
+      const size = sizesRef.current.runner;
+      const spriteLeft = boxLeft + x - size / 2 + shakeX;
+      const spriteTop = boxTop - size - y + 1 + shakeY;
+      const poses = stunStars(elapsed, size);
       for (let i = 0; i < starEls.length; i++) {
         const el = starEls[i];
         const star = poses[i];
@@ -268,9 +296,10 @@ export function ComposerRunner({
       }
       showLayer(true);
 
-      const insetTrack = Math.max(0, track.width - RUNNER_INSET * 2);
+      const inset = sizesRef.current.inset;
+      const insetTrack = Math.max(0, track.width - inset * 2);
       if (prevWidth > 0 && prevWidth !== track.width) {
-        const prevInset = Math.max(0, prevWidth - RUNNER_INSET * 2);
+        const prevInset = Math.max(0, prevWidth - inset * 2);
         along = scaleTrackX(along, prevInset, insetTrack);
         hitAlong = scaleTrackX(hitAlong, prevInset, insetTrack);
         frozenX = scaleTrackX(frozenX, prevWidth, track.width);
@@ -296,7 +325,7 @@ export function ComposerRunner({
         exiting = true;
         exitAt = now;
         endStun();
-        const current = poseAt(along, facing, track.width, null, []);
+        const current = poseAt(along, facing, track.width, null, [], inset);
         frozenX = current.x;
         frozenFacing = current.facing;
         for (const coin of coins) {
@@ -306,7 +335,10 @@ export function ComposerRunner({
 
       if (exiting) {
         const t = reduced ? 1 : Math.min(1, (now - exitAt) / EXIT_MS);
-        const y = reduced ? -EXIT_SINK : exitJumpY(t);
+        const scale = sizesRef.current.runner / RUNNER_SIZE;
+        const y = reduced
+          ? -EXIT_SINK * scale
+          : exitJumpY(t, EXIT_PEAK * scale, EXIT_SINK * scale);
         placeSprite(track.left, track.top, frozenX, y, frozenFacing);
         for (const coin of [...coins]) {
           const pop = Math.min(1, (now - (coin.collectedAt ?? now)) / COLLECT_POP_MS);
@@ -337,7 +369,7 @@ export function ComposerRunner({
       for (const coin of coins) {
         if (
           coin.collectedAt == null &&
-          (coin.x < RUNNER_INSET || coin.x > track.width - RUNNER_INSET)
+          (coin.x < inset || coin.x > track.width - inset)
         ) {
           coin.collectedAt = now;
         }
@@ -351,10 +383,18 @@ export function ComposerRunner({
         track.width,
         learned ? obstacle : null,
         stunning ? [] : coins,
+        inset,
       );
       if (
         !stunning &&
-        hitsChevron(pose.x, pose.y, pose.facing, obstacle, learned)
+        hitsChevron(
+          pose.x,
+          pose.y,
+          pose.facing,
+          obstacle,
+          learned,
+          sizesRef.current.runner,
+        )
       ) {
         stunning = true;
         stunAt = now;
@@ -383,17 +423,20 @@ export function ComposerRunner({
         if (x != null) {
           const el = document.createElement("div");
           el.className = "absolute top-0 left-0";
-          el.style.width = `${COIN_SIZE}px`;
-          el.style.height = `${COIN_SIZE}px`;
+          const { pickup, hover, runner } = sizesRef.current;
+          el.style.width = `${pickup}px`;
+          el.style.height = `${pickup}px`;
           el.style.transform =
             "translate3d(var(--coin-x, -64px), var(--coin-y, -64px), 0)";
           el.style.filter = "drop-shadow(0 1px 0 rgba(0,0,0,0.45))";
-          el.innerHTML = COIN_SVG;
+          el.innerHTML = pickupRef.current;
           coinLayer.append(el);
           coins.push({
             id: ++coinId,
             x,
-            height: COIN_HOVER,
+            height: hover,
+            size: pickup,
+            runner,
             el,
             collectedAt: null,
           });
@@ -418,13 +461,14 @@ export function ComposerRunner({
           coin.collectedAt == null
             ? 0
             : Math.min(1, (now - coin.collectedAt) / COLLECT_POP_MS);
+        const half = (coin.size ?? COIN_SIZE) / 2;
         coin.el.style.setProperty(
           "--coin-x",
-          `${Math.round(track.left + coin.x - COIN_SIZE / 2)}px`,
+          `${Math.round(track.left + coin.x - half)}px`,
         );
         coin.el.style.setProperty(
           "--coin-y",
-          `${Math.round(track.top - coin.height - COIN_SIZE / 2 - bob - COLLECT_POP_PX * pop)}px`,
+          `${Math.round(track.top - coin.height - half - bob - COLLECT_POP_PX * pop)}px`,
         );
         coin.el.style.opacity = String(1 - pop);
         if (pop >= 1) coin.el.remove();
@@ -469,8 +513,8 @@ export function ComposerRunner({
         ref={spriteRef}
         className="absolute top-0 left-0 origin-bottom drop-shadow-[0_1px_0_rgba(0,0,0,0.45)] will-change-transform"
         style={{
-          width: RUNNER_SIZE,
-          height: RUNNER_SIZE,
+          width: sizes.runner,
+          height: sizes.runner,
           transform:
             "translate3d(var(--runner-x, -64px), var(--runner-y, -64px), 0) scaleX(var(--runner-facing, 1))",
           clipPath: "inset(0 0 var(--runner-clip, 0px) 0)",
@@ -480,7 +524,8 @@ export function ComposerRunner({
           project={project}
           name={appearance.name}
           color={appearance.color}
-          className="size-4"
+          multicolor={appearance.multicolor}
+          className="size-full"
           active
         />
       </div>

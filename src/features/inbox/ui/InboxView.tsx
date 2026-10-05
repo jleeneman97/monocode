@@ -181,6 +181,7 @@ import {
   resolveTabGroupColor,
   resolveTabGroupLogo,
   resolveTabGroupMascot,
+  usesAutomaticTabGroupColor,
 } from "../../workspace/model/tabGroups";
 import { AgentMarkdown } from "../../sessions/ui/AgentMarkdown";
 import {
@@ -222,6 +223,7 @@ type InboxProjectOption = {
   logoPath: string | null;
   mascotName: string | null;
   mascotColor: string;
+  mascotMulticolor: boolean;
 };
 
 function inboxProjectOptions(
@@ -241,6 +243,7 @@ function inboxProjectOptions(
         logoPath: resolveTabGroupLogo(key, logos),
         mascotName: resolveTabGroupMascot(key, mascots),
         mascotColor: resolveTabGroupColor(key, colors, custom, name),
+        mascotMulticolor: usesAutomaticTabGroupColor(key, colors, custom),
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -251,7 +254,7 @@ function InboxProjectMark({
 }: {
   project: Pick<
     InboxProjectOption,
-    "name" | "logoPath" | "mascotName" | "mascotColor"
+    "name" | "logoPath" | "mascotName" | "mascotColor" | "mascotMulticolor"
   >;
 }) {
   if (project.logoPath) {
@@ -268,6 +271,7 @@ function InboxProjectMark({
       project={project.name}
       color={project.mascotColor}
       name={project.mascotName}
+      multicolor={project.mascotMulticolor}
       className="size-3 shrink-0"
     />
   );
@@ -1058,6 +1062,11 @@ export function InboxView({
                       groupCustomColors,
                       projectName(item.projectPath),
                     )}
+                    mascotMulticolor={usesAutomaticTabGroupColor(
+                      projectId,
+                      groupColors,
+                      groupCustomColors,
+                    )}
                     relatedSessionCount={relatedSessions.length}
                     onSelect={() => {
                       markInboxItemSeen({
@@ -1448,6 +1457,7 @@ function InboxCard({
   logoPath,
   mascotName,
   mascotColor,
+  mascotMulticolor,
   relatedSessionCount,
   onSelect,
 }: {
@@ -1456,6 +1466,7 @@ function InboxCard({
   logoPath: string | null;
   mascotName: string | null;
   mascotColor: string;
+  mascotMulticolor: boolean;
   relatedSessionCount: number;
   onSelect: () => void;
 }) {
@@ -1548,6 +1559,7 @@ function InboxCard({
               project={name}
               color={mascotColor}
               name={mascotName}
+              multicolor={mascotMulticolor}
               className="size-3 shrink-0"
             />
           )}

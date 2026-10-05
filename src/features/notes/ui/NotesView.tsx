@@ -51,6 +51,7 @@ import {
   resolveTabGroupColor,
   resolveTabGroupLogo,
   resolveTabGroupMascot,
+  usesAutomaticTabGroupColor,
 } from "../../workspace/model/tabGroups";
 import { AgentMarkdown, MarkdownSourceHighlight } from "../../sessions/ui/AgentMarkdown";
 
@@ -394,6 +395,7 @@ function NoteProjectMark({
           project={project}
           color={mascotColor}
           name={mascotName}
+          multicolor={usesAutomaticTabGroupColor(key, colors, customColors)}
           className="size-3 shrink-0"
         />
       )}

@@ -280,6 +280,7 @@ import {
   resolveTabGroupLabel,
   resolveTabGroupLogo,
   resolveTabGroupMascot,
+  usesAutomaticTabGroupColor,
 } from "../../workspace/model/tabGroups";
 import { useTabGroupLogos } from "../../projects/hooks/useTabGroupLogos";
 import { ProjectLogoIcon } from "../../projects/ui/ProjectLogoIcon";
@@ -3628,6 +3629,7 @@ function ProjectScopeIcon({ path }: { path: string }) {
       project={name}
       color={resolveTabGroupColor(key, colors, customColors, name)}
       name={resolveTabGroupMascot(key, mascots)}
+      multicolor={usesAutomaticTabGroupColor(key, colors, customColors)}
       className="size-3.5"
     />
   );

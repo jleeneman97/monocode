@@ -7,13 +7,15 @@ import {
 } from "./projectMascots";
 
 describe("projectMascots", () => {
-  it("keeps every sprite on the shared grid", () => {
-    expect(PROJECT_MASCOTS).toHaveLength(10);
+  it("keeps every sprite square on its own grid", () => {
+    expect(PROJECT_MASCOTS).toHaveLength(11);
     for (const mascot of PROJECT_MASCOTS) {
+      const letters = mascot.restLayers ? "#.fe" : "#.";
+      expect(mascot.grid).toBe(mascot.name === "monkey" ? 16 : MASCOT_GRID);
       for (const frame of [mascot.rest, mascot.talk]) {
-        expect(frame).toHaveLength(MASCOT_GRID);
+        expect(frame).toHaveLength(mascot.grid);
         for (const row of frame) {
-          expect(row).toMatch(new RegExp(`^[#.]{${MASCOT_GRID}}$`));
+          expect(row).toMatch(new RegExp(`^[${letters}]{${mascot.grid}}$`));
         }
       }
       expect(mascot.restPath).not.toBe("");
@@ -48,5 +50,30 @@ describe("projectMascots", () => {
       ),
     );
     expect(names.size).toBeGreaterThan(3);
+  });
+
+  it("draws the monkey in its own colors or in one, face cut out", () => {
+    const monkey = projectMascot("alpha", "monkey");
+    expect(monkey.restLayers?.map((layer) => layer.fill)).toEqual([
+      "#8f5b34",
+      "#f2cc9d",
+      "#2b1a10",
+    ]);
+    // A picked color replaces the fur only, so face and eyes keep theirs.
+    expect(monkey.restLayers?.map((layer) => !!layer.tint)).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    // Where art must be one color, fur and eyes paint and the face is a hole.
+    expect(monkey.restPath).toBe(mascotPath(monkey.rest, "#e"));
+    expect(monkey.restPath).not.toContain("M6 4h3");
+  });
+
+  it("never hands out an opt-in mascot on its own", () => {
+    const projects = Array.from({ length: 200 }, (_, i) => `project-${i}`);
+    expect(projects.some((project) => projectMascot(project).name === "monkey")).toBe(
+      false,
+    );
   });
 });

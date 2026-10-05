@@ -203,6 +203,11 @@ export function deleteProjectGroup(id: string): boolean {
   return true;
 }
 
+/** The group shows its automatic color: none picked, none custom. */
+export function projectGroupUsesAutomaticColor(group: ProjectGroup): boolean {
+  return !group.customColor && group.colorIndex == null;
+}
+
 export function projectGroupColor(group: ProjectGroup): string {
   if (group.customColor) return group.customColor;
   if (

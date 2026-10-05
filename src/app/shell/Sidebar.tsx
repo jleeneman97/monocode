@@ -119,6 +119,7 @@ import type {
   LinkedWorkItem,
 } from "../../features/sessions/model/session";
 import type { LiveAgent } from "../../features/sessions/model/liveAgents";
+import type { ProjectUnread } from "../../features/sessions/model/projectUnread";
 import type { SessionSummary } from "../../features/sessions/data/sessionStore";
 import type { SettingsSectionId } from "../../features/settings/model/settings";
 import type { InstalledUpdate } from "../model/updateNotice";
@@ -278,6 +279,7 @@ type Props = {
   textHarness?: HarnessId;
   recents?: RecentProject[];
   busyProjectPaths?: Iterable<string>;
+  projectUnread?: ReadonlyMap<string, ProjectUnread>;
   liveAgents?: LiveAgent[];
   onSelectAgent?: (sessionId: string) => void;
   onSelectProject?: (path: string) => void;
@@ -369,6 +371,7 @@ function SidebarComponent({
   textHarness,
   recents = [],
   busyProjectPaths,
+  projectUnread,
   liveAgents = [],
   onSelectAgent,
   onSelectProject,
@@ -2168,6 +2171,7 @@ function SidebarComponent({
           recents={recents}
           inboxUnseen={inboxUnseen}
           busyPaths={busyProjectPaths}
+          unread={projectUnread}
           liveAgents={liveAgents}
           activeSessionId={activeSessionId}
           onSelectAgent={onSelectAgent}

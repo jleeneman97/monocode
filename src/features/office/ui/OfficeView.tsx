@@ -18,10 +18,18 @@ import {
   loadTabGroupColors,
   loadTabGroupCustomColors,
   loadTabGroupLabels,
+  loadTabGroupMascots,
   resolveTabGroupColor,
   resolveTabGroupLabel,
+  resolveTabGroupMascot,
+  usesAutomaticTabGroupColor,
 } from "../../workspace/model/tabGroups";
+import {
+  mascotBodyColor,
+  projectMascot,
+} from "../../projects/model/projectMascots";
 import type { Session } from "../../sessions/model/session";
+import type { ProjectUnread } from "../../sessions/model/projectUnread";
 import { buildOfficeZones, type OfficeZone } from "../model/officeState";
 import { OfficeFloor } from "./OfficeFloor";
 
@@ -32,6 +40,7 @@ type Props = {
   recents: RecentProject[];
   sessions: Session[];
   unseenFinishedIds: ReadonlySet<string>;
+  projectUnread?: ReadonlyMap<string, ProjectUnread>;
   onClose: () => void;
   onToggleSidebar?: () => void;
   onOpenSession: (sessionId: string) => void;
@@ -46,6 +55,7 @@ export function OfficeView({
   recents,
   sessions,
   unseenFinishedIds,
+  projectUnread,
   onClose,
   onToggleSidebar,
   onOpenSession,
@@ -62,24 +72,37 @@ export function OfficeView({
     const labels = loadTabGroupLabels();
     const colors = loadTabGroupColors();
     const customColors = loadTabGroupCustomColors();
+    const mascots = loadTabGroupMascots();
     return buildOfficeZones({
       projects: projectRailItems(recents, cwd),
       groups: loadProjectGroups(),
       assignments: loadProjectGroupAssignments(),
       sessions,
       unseenFinishedIds,
+      unread: projectUnread,
       appearance: (path) => {
         const key = projectKey(path);
         const name = projectName(path);
+        const color = resolveTabGroupColor(key, colors, customColors, name);
+        const mascot = projectMascot(name, resolveTabGroupMascot(key, mascots));
+        // A monkey mascot sends a monkey to the desk, furred like the mascot:
+        // its own brown on the automatic color, the picked color otherwise.
+        const monkeyFur =
+          mascot.name === "monkey"
+            ? usesAutomaticTabGroupColor(key, colors, customColors)
+              ? mascotBodyColor("monkey")
+              : color
+            : undefined;
         return {
           name: resolveTabGroupLabel(key, labels, name),
-          color: resolveTabGroupColor(key, colors, customColors, name),
+          color,
+          ...(monkeyFur ? { monkeyFur } : {}),
         };
       },
       groupColor: projectGroupColor,
     });
     // `revision` re-reads storage after a rename, regroup, or recolor.
-  }, [cwd, recents, sessions, unseenFinishedIds, revision]);
+  }, [cwd, recents, sessions, unseenFinishedIds, projectUnread, revision]);
 
   const totals = useMemo(() => {
     let agents = 0;

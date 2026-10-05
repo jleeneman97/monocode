@@ -10,6 +10,7 @@ import {
   resolveTabGroupColor,
   resolveTabGroupLabel,
   resolveTabGroupMascot,
+  usesAutomaticTabGroupColor,
 } from "../../workspace/model/tabGroups";
 import { Check, ChevronDown, ChevronUp, CircleAlert } from "../../../shared/ui/icons";
 import { HarnessIcon } from "./HarnessIcon";
@@ -188,6 +189,11 @@ function LiveAgentCard({
           project={seed}
           color={color}
           name={resolveTabGroupMascot(key, groupMascots)}
+          multicolor={usesAutomaticTabGroupColor(
+            key,
+            groupColors,
+            groupCustomColors,
+          )}
           className="size-2 shrink-0"
           active={live}
         />
