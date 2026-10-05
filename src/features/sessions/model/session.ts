@@ -403,6 +403,10 @@ export type WorkspaceMode = "current" | "worktree";
 export type BackgroundTask = {
   id: string;
   description: string;
+  /** A subagent: still the agent at work, unlike a lingering shell. */
+  agent?: boolean;
+  /** The tool call that spawned a subagent, matching its transcript block. */
+  callId?: string;
 };
 
 export type Session = {
@@ -696,11 +700,14 @@ export function sessionNeedsInput(session: Session): boolean {
  * The agent itself is at work. A turn it yielded with only background work
  * left (a dev server, a watcher) stays open underneath, but the agent is
  * waiting, not working, so running indicators should not read it as busy.
+ * Subagents it is still waiting on count as work.
  */
 export function sessionWorking(
   session: Pick<Session, "busy" | "backgroundTasks">,
 ): boolean {
-  return !!session.busy && !session.backgroundTasks?.length;
+  if (!session.busy) return false;
+  const tasks = session.backgroundTasks;
+  return !tasks?.length || tasks.some((task) => task.agent);
 }
 
 /** The single unsent user turn held by a session, when present. */

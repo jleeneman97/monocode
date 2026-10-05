@@ -124,6 +124,7 @@ type LiveAgentTask = {
 type BackgroundTask = {
   description: string;
   toolUseId?: string;
+  agent: boolean;
 };
 
 type Live = {
@@ -1226,9 +1227,12 @@ function handleAgentLifecycle(
     live.backgroundTasks.set(started.taskId, {
       description: started.description,
       toolUseId: started.toolUseId,
+      agent: isAgentTaskType(started.taskType),
     });
-    syncBackgroundWait(live);
-    if (!isAgentTaskType(started.taskType)) return true;
+    if (!isAgentTaskType(started.taskType)) {
+      syncBackgroundWait(live);
+      return true;
+    }
     live.agentTasks.set(started.taskId, {
       taskId: started.taskId,
       toolUseId:
@@ -1244,6 +1248,7 @@ function handleAgentLifecycle(
       started.description,
       "in_progress",
     );
+    syncBackgroundWait(live);
     return true;
   }
 
@@ -1253,6 +1258,7 @@ function handleAgentLifecycle(
     if (task && !task.toolUseId) {
       task.toolUseId =
         progress.toolUseId ?? unclaimedAgentCall(live, task.description);
+      if (task.toolUseId) syncBackgroundWait(live);
     }
     const title = progress.description || task?.description || "Subagent";
     const detail =
@@ -1281,6 +1287,7 @@ function handleAgentLifecycle(
     const background = live.backgroundTasks.get(updated.taskId);
     if (background && updated.description) {
       background.description = updated.description;
+      syncBackgroundWait(live);
     }
     if (isTerminalAgentTaskStatus(updated.status)) {
       settleBackgroundRow(
@@ -1325,7 +1332,10 @@ function handleAgentLifecycle(
   }
   for (const row of allTasks) {
     if (!live.backgroundTasks.has(row.taskId)) {
-      live.backgroundTasks.set(row.taskId, { description: row.description });
+      live.backgroundTasks.set(row.taskId, {
+        description: row.description,
+        agent: isAgentTaskType(row.taskType),
+      });
     }
   }
   const liveTasks = allTasks.filter((task) => isAgentTaskType(task.taskType));
@@ -1715,13 +1725,26 @@ function clearAwaitingResume(live: Live): void {
 function syncBackgroundWait(live: Live): void {
   const waiting =
     live.activeTurn && live.turnResultSeen && !live.cancelled
-      ? [...live.backgroundTasks].map(([id, task]) => ({
-          id,
-          description: task.description,
-        }))
+      ? [...live.backgroundTasks].map(([id, task]) => {
+          const agentTask = live.agentTasks.get(id);
+          const agent = task.agent || !!agentTask;
+          // The spawning call, so the run's own line can pair with its task.
+          const callId = agent
+            ? (agentTask?.toolUseId ?? task.toolUseId)
+            : undefined;
+          return {
+            id,
+            description: task.description,
+            ...(agent ? { agent: true } : {}),
+            ...(callId ? { callId } : {}),
+          };
+        })
       : [];
   const key = waiting
-    .map((task) => `${task.id}\u0000${task.description}`)
+    .map(
+      (task) =>
+        `${task.id}\u0000${task.description}\u0000${!!task.agent}\u0000${task.callId ?? ""}`,
+    )
     .join("\n");
   if (key === live.backgroundKey) return;
   live.backgroundKey = key;

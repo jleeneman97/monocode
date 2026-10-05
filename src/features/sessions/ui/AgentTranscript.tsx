@@ -806,6 +806,7 @@ function AgentTranscriptComponent({
                   key={item.block.id}
                   block={item.block}
                   layout={transcriptLayout}
+                  visible={item.block.role === "user" ? visible : undefined}
                   stickyIndex={firstVisibleTurn + turnIndex + 1}
                   // Prose reads the same wherever it lands: under the fold
                   // line at the top of the turn, or under the work it follows.
@@ -1215,7 +1216,7 @@ function TurnMetricsBadge({
   return (
     <div
       ref={root}
-      className="relative shrink-0"
+      className="relative shrink-0 ml-[3px]"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onFocus={() => setHovered(true)}
@@ -1431,6 +1432,7 @@ function EditLastTurnButton({
 const TranscriptBlock = memo(function TranscriptBlock({
   block,
   layout,
+  visible,
   stickyIndex,
   underLine = false,
   embedded = false,
@@ -1452,6 +1454,7 @@ const TranscriptBlock = memo(function TranscriptBlock({
 }: {
   block: Block;
   layout: TranscriptLayout;
+  visible?: boolean;
   stickyIndex: number;
   /** True when something already sits directly above this in the turn. */
   underLine?: boolean;
@@ -1478,6 +1481,7 @@ const TranscriptBlock = memo(function TranscriptBlock({
       <UserMessageBlock
         block={block}
         layout={layout}
+        visible={visible ?? true}
         stickyIndex={stickyIndex}
         cwd={cwd}
         onEdit={onEditLastTurn}
@@ -1605,6 +1609,7 @@ const TranscriptBlock = memo(function TranscriptBlock({
 function UserMessageBlock({
   block,
   layout,
+  visible,
   stickyIndex,
   onEdit,
   editing = false,
@@ -1615,6 +1620,7 @@ function UserMessageBlock({
 }: {
   block: Block;
   layout: TranscriptLayout;
+  visible: boolean;
   stickyIndex: number;
   onEdit?: () => void;
   editing?: boolean;
@@ -1673,6 +1679,11 @@ function UserMessageBlock({
         setSingleLine(false);
         return;
       }
+      // Pooled or offscreen turns can measure as zero before they are laid out.
+      if (el.clientWidth === 0) {
+        setSingleLine(false);
+        return;
+      }
       if (!lineHeight) {
         lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight);
       }
@@ -1685,7 +1696,7 @@ function UserMessageBlock({
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [text, roundsSingleLine, expanded]);
+  }, [text, roundsSingleLine, expanded, visible]);
 
   const toggle = () => {
     if (overflows) setExpanded((value) => !value);
@@ -1711,7 +1722,7 @@ function UserMessageBlock({
               : "bg-content/10"
           } ${editing ? "edit-last-turn-bubble" : ""} ${
             chat
-              ? `w-fit max-w-xl ${singleLine ? "rounded-full" : "rounded-xl"}`
+              ? `w-fit max-w-[min(100%,36rem)] ${singleLine ? "rounded-full" : "rounded-xl"}`
               : "rounded-lg border border-content/10"
           }`}
           style={{ zIndex: stickyIndex }}
@@ -2716,6 +2727,149 @@ function SubagentMascot({
   );
 }
 
+const NO_STEPS: AgentStep[] = [];
+
+/**
+ * One delegated run read as a conversation of its own, swapped in for the
+ * session's transcript from the dock above the composer: the brief it was
+ * given, its work and what it said along the way, then its report. A live run
+ * keeps the newest step in view unless the reader has scrolled up.
+ */
+export function SubagentTranscript({
+  block,
+  cwd,
+  live = false,
+  onOpenFile,
+  onOpenDiff,
+}: {
+  block: Block;
+  cwd?: string;
+  live?: boolean;
+  onOpenFile?: (path: string) => void;
+  onOpenDiff?: (path: string) => void;
+}) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
+  const name = subagentName(block);
+  const brief = subagentBrief(block);
+  const model = subagentModelName(block);
+  const state = toolCallState(block);
+  const active = live && state === "pending";
+  const steps = block.agentRun?.steps ?? NO_STEPS;
+  const stepBlocks = useMemo(() => steps.map(agentStepBlock), [steps]);
+  const items = useMemo(
+    () => groupTurnItems(stepBlocks, { settled: !active }),
+    [stepBlocks, active],
+  );
+  const status = subagentStatusLine(block, steps);
+  const report = subagentReport(block);
+
+  // Follow the newest step while pinned, including growth after render:
+  // highlighted code, opened groups, media.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    const inner = content.current;
+    if (!el || !inner) return;
+    const follow = () => {
+      if (pinned.current) el.scrollTop = el.scrollHeight;
+    };
+    follow();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(follow);
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div
+      ref={scroller}
+      data-subagent-transcript={block.id}
+      onScroll={(event) => {
+        const el = event.currentTarget;
+        pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+      }}
+      className="agent-transcript h-full overflow-y-auto overscroll-none font-mono text-[13px] leading-5"
+    >
+      <div
+        ref={content}
+        className="mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-1 pb-8"
+      >
+        <div className="flex min-w-0 items-center gap-2 px-4 pt-3 pb-1">
+          <SubagentMascot name={name} state={state} active={active} />
+          {active ? (
+            <Shimmer
+              className="min-w-0 flex-1 truncate font-sans text-sm"
+              duration={1.6}
+            >
+              {name}
+            </Shimmer>
+          ) : (
+            <span
+              className={`min-w-0 flex-1 truncate font-sans text-sm ${
+                state === "rejected" ? "text-red-400" : "text-content/75"
+              }`}
+            >
+              {name}
+            </span>
+          )}
+          {model || status ? (
+            <span className="flex min-w-0 max-w-[55%] shrink-0 items-baseline gap-2 font-sans text-[12px] text-content/40">
+              {model ? <span className="truncate">{model}</span> : null}
+              {status ? <span className="shrink-0">{status}</span> : null}
+            </span>
+          ) : null}
+        </div>
+        {brief && brief !== name ? (
+          <div className="px-4 pb-3">
+            <div className="min-w-0 whitespace-pre-wrap break-words rounded-lg border border-content/10 bg-content/10 px-3 py-2 font-sans text-sm text-content">
+              {brief}
+            </div>
+          </div>
+        ) : null}
+        {items.map((item, index) =>
+          item.type === "block" ? (
+            item.block.text ? (
+              <div key={item.block.id} className="min-w-0 px-4 pt-3 pb-1 text-content">
+                <AgentMarkdown
+                  text={item.block.text}
+                  cwd={cwd}
+                  onOpenFile={onOpenFile}
+                />
+              </div>
+            ) : null
+          ) : (
+            <ActivityPhases
+              key={item.blocks[0].id}
+              blocks={item.blocks}
+              cwd={cwd}
+              done={!active || index < items.length - 1}
+              onOpenFile={onOpenFile}
+              onOpenDiff={onOpenDiff}
+            />
+          ),
+        )}
+        {active && items.length === 0 ? (
+          <div className="px-4 py-1 font-sans text-[12px] text-content/40">
+            Starting…
+          </div>
+        ) : null}
+        {report ? (
+          <div className="min-w-0 px-4 pt-3 pb-1 text-content">
+            {state === "rejected" ? (
+              <pre className="min-w-0 whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-red-400/80">
+                {report}
+              </pre>
+            ) : (
+              <AgentMarkdown text={report} cwd={cwd} onOpenFile={onOpenFile} />
+            )}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 /**
  * A mirrored step as the transcript block it stands for, so a subagent's trail
  * goes through the same rows — labels, file chips, diffs — as the main agent's.
@@ -3105,11 +3259,7 @@ function ActivityToolRow({
   const appCall = monoCodeToolCall(block);
   if (appCall) {
     return (
-      <MonoCodeCallRow
-        block={block}
-        call={appCall}
-        onApproval={onApproval}
-      />
+      <MonoCodeCallRow block={block} call={appCall} onApproval={onApproval} />
     );
   }
   const label = toolCallLabel(block, cwd);
@@ -3197,7 +3347,8 @@ function MonoCodeCallRow({
   onApproval?: (requestId: number, decision: ApprovalDecision) => void;
 }) {
   const state = toolCallState(block);
-  const output = block.tool?.detail?.trim() || block.tool?.preview?.output?.trim();
+  const output =
+    block.tool?.detail?.trim() || block.tool?.preview?.output?.trim();
   const [errorOpen, setErrorOpen] = useState(false);
   const hasError = state === "rejected" && !!output;
   const pendingApproval = needsApproval(block);
@@ -3243,9 +3394,7 @@ function MonoCodeCallRow({
           {summary}
         </button>
       ) : (
-        <div className="flex min-w-0 items-center gap-1.5 py-1">
-          {summary}
-        </div>
+        <div className="flex min-w-0 items-center gap-1.5 py-1">{summary}</div>
       )}
       {errorOpen && hasError ? (
         <pre className="min-w-0 whitespace-pre-wrap break-words py-1 pl-5 font-mono text-[12px] leading-5 text-red-400/80">
@@ -3399,11 +3548,7 @@ function ToolCall({
   if (appCall) {
     return (
       <div className={frame}>
-        <MonoCodeCallRow
-          block={block}
-          call={appCall}
-          onApproval={onApproval}
-        />
+        <MonoCodeCallRow block={block} call={appCall} onApproval={onApproval} />
       </div>
     );
   }
