@@ -34,6 +34,9 @@ IDENTIFIER="$(defaults read "$BUILT/Contents/Info" CFBundleIdentifier)"
 # LaunchServices and would keep competing for notification clicks.
 rm -rf "$DEST"
 ditto "$BUILT" "$DEST"
+# Unregistering the build output does not stick: LaunchServices finds it again
+# and the Applications view lists MonoCode twice. Remove the copy instead.
+rm -rf "$BUILT"
 
 # Forget every other bundle registered under this identifier, including the
 # build output that was just copied.
