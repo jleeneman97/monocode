@@ -114,6 +114,8 @@ import {
 import type { Worktree } from "../../source-control/model/worktrees";
 import { CwdPicker } from "../../projects/ui/CwdPicker";
 import { FileMentionPicker } from "./FileMentionPicker";
+import { PromptHistoryPicker } from "./PromptHistoryPicker";
+import { caretOnFirstLine } from "../model/promptHistory";
 import { McpServerPicker } from "./McpServerPicker";
 import { FileTypeIcon } from "../../files/ui/FileTypeIcon";
 import { InboxMiniCard } from "../../inbox/ui/InboxMiniCard";
@@ -248,6 +250,8 @@ type Props = {
   allowBusySubmit?: boolean;
   editLastTurnSupported?: boolean;
   lastTurnRecall?: LastTurnRecall | null;
+  /** Prompts sent earlier in this session, oldest first; ArrowUp lists them. */
+  promptHistory?: readonly string[];
   queuedMessages?: QueuedMessage[];
   queueStatus?: MessageQueueStatus;
   /** Work the agent left running after it yielded. */
@@ -346,6 +350,8 @@ function ToolButton({
   );
 }
 
+const EMPTY_PROMPT_HISTORY: readonly string[] = [];
+
 export function Composer({
   enabled = true,
   focused,
@@ -385,6 +391,7 @@ export function Composer({
   allowBusySubmit = true,
   editLastTurnSupported = false,
   lastTurnRecall = null,
+  promptHistory = EMPTY_PROMPT_HISTORY,
   queuedMessages = [],
   queueStatus,
   backgroundTasks,
@@ -536,6 +543,8 @@ export function Composer({
   const [notes, setNotes] = useState<Note[]>(() => peekNotes() ?? []);
   const [mention, setMention] = useState<MentionToken | null>(null);
   const [mentionActive, setMentionActive] = useState(0);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyActive, setHistoryActive] = useState(0);
   const [resendEdited, setResendEdited] = useState(false);
   const [runnerEnabled, setRunnerEnabled] = useState(loadComposerRunner);
   const [runnerLive, setRunnerLive] = useState(
@@ -1299,9 +1308,25 @@ export function Composer({
     restoreDraft,
   ]);
 
+  const pickHistoryPrompt = useCallback(
+    (prompt: string) => {
+      setHistoryOpen(false);
+      draftRevisionRef.current += 1;
+      // Attachments already in the composer stay; only the text is replaced.
+      restoreDraft(prompt, attachmentsRef.current);
+      const el = ref.current;
+      if (el) {
+        el.setSelectionRange(prompt.length, prompt.length);
+        el.focus();
+      }
+    },
+    [restoreDraft],
+  );
+
   useEffect(() => {
     draftRevisionRef.current += 1;
     setResendEdited(false);
+    setHistoryOpen(false);
     onEditingLastTurnChange?.(false);
   }, [sessionId, onEditingLastTurnChange]);
 
@@ -1516,6 +1541,59 @@ export function Composer({
     if (disabled) return;
     if (isImeComposition(e.nativeEvent)) return;
     if (creatingSkill) return;
+
+    if (historyOpen) {
+      const count = promptHistory.length;
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (count > 0) setHistoryActive((index) => Math.max(0, index - 1));
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        // Past the newest prompt the list slides away again.
+        if (historyActive >= count - 1) setHistoryOpen(false);
+        else setHistoryActive((index) => index + 1);
+        return;
+      }
+      if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+        e.preventDefault();
+        const prompt = promptHistory[historyActive];
+        if (prompt !== undefined) pickHistoryPrompt(prompt);
+        else setHistoryOpen(false);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setHistoryOpen(false);
+        return;
+      }
+      // Anything else is typing: close the list and let the key through.
+      setHistoryOpen(false);
+    }
+
+    if (
+      e.key === "ArrowUp" &&
+      !e.shiftKey &&
+      !e.altKey &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      promptHistory.length > 0 &&
+      !mentionOpen &&
+      !slash &&
+      caretOnFirstLine(
+        e.currentTarget.value,
+        e.currentTarget.selectionStart,
+        e.currentTarget.selectionEnd,
+      )
+    ) {
+      e.preventDefault();
+      setHistoryActive(promptHistory.length - 1);
+      setHistoryOpen(true);
+      return;
+    }
+
     if (
       e.key === "Enter" &&
       !e.shiftKey &&
@@ -1945,6 +2023,19 @@ export function Composer({
             />
           </div>
         ) : null}
+        {historyOpen &&
+        promptHistory.length > 0 &&
+        !pickerOpen &&
+        !mentionOpen ? (
+          <div className="absolute inset-x-0 bottom-full z-30 mb-1">
+            <PromptHistoryPicker
+              prompts={promptHistory}
+              active={historyActive}
+              onActive={setHistoryActive}
+              onPick={pickHistoryPrompt}
+            />
+          </div>
+        ) : null}
         {mentionOpen && !pickerOpen ? (
           <div className="absolute inset-x-0 bottom-full z-30 mb-1">
             <FileMentionPicker
@@ -2138,6 +2229,7 @@ export function Composer({
                 shell ? "py-4" : "py-3"
               }`}
               onFocus={onFocus}
+              onBlur={() => setHistoryOpen(false)}
               onKeyDown={onKeyDown}
               onPaste={onPaste}
               onScroll={(e) => syncHighlightScroll(e.currentTarget)}

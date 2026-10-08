@@ -111,6 +111,7 @@ import { AstraWelcome } from "./AstraWelcome";
 import { OpusWelcome } from "./OpusWelcome";
 import { projectKey } from "../../../shared/lib/paths";
 import { canEditLastTurn, lastTurnRecall } from "../model/editLastTurn";
+import { promptHistory } from "../model/promptHistory";
 import {
   loadProjectChatBackgroundSettings,
   projectChatBackgroundImageRevision,
@@ -394,6 +395,10 @@ const LocalSessionPane = memo(function LocalSessionPane({
   const editLastTurnSupported =
     !remote && !monoForSession(session.id) && canEditLastTurn(session);
   const turnRecall = editLastTurnSupported ? lastTurnRecall(session) : null;
+  const sessionPromptHistory = useMemo(
+    () => promptHistory(session.blocks),
+    [session.blocks],
+  );
   const draftBlock = sessionDraftBlock(session);
   useSyncExternalStore(
     subscribeProjectChatBackground,
@@ -894,6 +899,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
       busy={!!session.busy}
       editLastTurnSupported={editLastTurnSupported}
       lastTurnRecall={turnRecall}
+      promptHistory={sessionPromptHistory}
       onRecallLastTurnReady={(recall) => {
         recallLastTurnRef.current = recall;
       }}
