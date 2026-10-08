@@ -26,6 +26,7 @@ export type SettingsSectionId =
   | "providers"
   | "mcp"
   | "skills"
+  | "monos"
   | "inbox"
   | "worktrees"
   | "archive";
@@ -103,8 +104,10 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     id: "mcp",
     group: "agents",
     label: "MCP",
-    description: "Find MCP servers across providers and manage their connections.",
-    keywords: "tools servers connections oauth authenticate login claude codex cursor opencode",
+    description:
+      "Find MCP servers across providers and manage their connections.",
+    keywords:
+      "tools servers connections oauth authenticate login claude codex cursor opencode",
   },
   {
     id: "skills",
@@ -113,6 +116,14 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     description:
       "Discover and manage file skills from project, personal, and harness folders.",
     keywords: "skill instructions prompt",
+  },
+  {
+    id: "monos",
+    group: "agents",
+    label: "Monos",
+    description:
+      "The resident agent beside your tabs, and which projects have one.",
+    keywords: "mono resident agent mascot claim project title bar",
   },
   {
     id: "inbox",
@@ -173,6 +184,19 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     section: "mcp",
     label: "MCP servers",
     keywords: "claude tools connections oauth authenticate login add remove",
+  },
+  {
+    id: "monos-enabled",
+    section: "monos",
+    label: "Show monos",
+    keywords: "mono agent rail hide",
+  },
+  {
+    id: "mono-list",
+    section: "monos",
+    label: "Your monos",
+    keywords:
+      "mono reset soul name projects sessions sidebar visibility hidden show",
   },
   {
     id: "project-worktrees",
@@ -253,6 +277,13 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     section: "appearance",
     label: "Accent color",
     keywords: "highlight bubble send button tint",
+  },
+  {
+    id: "diff-colors",
+    section: "appearance",
+    label: "Diff colors",
+    keywords:
+      "colorblind color blind accessibility added removed red green blue orange high contrast changes",
   },
   {
     id: "hue",
@@ -755,6 +786,55 @@ export function subscribeNotesEnabled(onStoreChange: () => void) {
     window.removeEventListener(NOTES_ENABLED_CHANGE_EVENT, onStoreChange);
 }
 
+const MONOS_ENABLED_KEY = "monocode.monosEnabled";
+
+export const MONOS_ENABLED_DEFAULT = true;
+
+/** Fired on `window` when monos are shown or hidden. */
+export const MONOS_ENABLED_CHANGE_EVENT = "monocode:monos-enabled-change";
+
+/** Whether monos show in the title bar at all, across every project. */
+export function loadMonosEnabled(): boolean {
+  return readFlag(MONOS_ENABLED_KEY) ?? MONOS_ENABLED_DEFAULT;
+}
+
+export function saveMonosEnabled(value: boolean) {
+  writeFlag(MONOS_ENABLED_KEY, value);
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent<boolean>(MONOS_ENABLED_CHANGE_EVENT, { detail: value }),
+  );
+}
+
+export function subscribeMonosEnabled(onStoreChange: () => void) {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener(MONOS_ENABLED_CHANGE_EVENT, onStoreChange);
+  return () =>
+    window.removeEventListener(MONOS_ENABLED_CHANGE_EVENT, onStoreChange);
+}
+
+const MONO_MENU_BAR_KEY = "monocode.monoMenuBarIcon";
+
+/** Fired on `window` when the menu bar icon is shown or hidden. */
+export const MONO_MENU_BAR_CHANGE_EVENT = "monocode:mono-menu-bar-change";
+
+export function loadMonoMenuBarIcon(): boolean {
+  return readFlag(MONO_MENU_BAR_KEY) ?? true;
+}
+
+export function saveMonoMenuBarIcon(value: boolean) {
+  writeFlag(MONO_MENU_BAR_KEY, value);
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(MONO_MENU_BAR_CHANGE_EVENT));
+}
+
+export function subscribeMonoMenuBarIcon(onStoreChange: () => void) {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener(MONO_MENU_BAR_CHANGE_EVENT, onStoreChange);
+  return () =>
+    window.removeEventListener(MONO_MENU_BAR_CHANGE_EVENT, onStoreChange);
+}
+
 const QUICK_COMPOSER_ENABLED_KEY = "monocode.quickComposerEnabled";
 const QUICK_COMPOSER_SHORTCUT_KEY = "monocode.quickComposerShortcut";
 
@@ -997,6 +1077,7 @@ export const KEYBINDINGS: KeybindingRow[] = [
     when: "Always",
   },
   { command: "App: Switch Model", keys: `${MOD}.`, when: "Always" },
+  { command: "App: Toggle Mono", keys: `${MOD}I`, when: "Project with a mono" },
   {
     command: "Composer: Toggle Workspace",
     keys: `${MOD}${SHIFT}G`,

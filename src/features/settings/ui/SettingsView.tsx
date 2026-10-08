@@ -53,6 +53,7 @@ import {
   applyChatBackgroundEmptyOpacity,
   applyChatBackgroundSessionOpacity,
   applyChatBackgroundScope,
+  applyDiffPalette,
   applyAccentColor,
   applyBodyGlass,
   applySidebarBlur,
@@ -75,6 +76,7 @@ import {
   loadChatBackgroundPath,
   loadChatBackgroundSessionOpacity,
   loadChatBackgroundScope,
+  loadDiffPalette,
   loadNewThreadBackgroundEffect,
   loadThemeDarkLightness,
   loadThemePreference,
@@ -90,6 +92,7 @@ import {
   saveChatBackgroundPath,
   saveChatBackgroundSessionOpacity,
   saveChatBackgroundScope,
+  saveDiffPalette,
   setNewThreadBackgroundEffect,
   saveThemeDarkLightness,
   saveThemePreference,
@@ -125,6 +128,8 @@ import {
   THEME_SATURATION_MIN,
   type ThemePreference,
   type ChatBackgroundScope,
+  DIFF_PALETTE_DEFAULT,
+  type DiffPalette,
   NEW_THREAD_BACKGROUND_EFFECTS,
   NEW_THREAD_BACKGROUND_EFFECT_LABELS,
   NEW_THREAD_BACKGROUND_EFFECT_DESCRIPTIONS,
@@ -172,6 +177,7 @@ import {
   defaultModelId,
   firstEnabledHarness,
   getModelSnapshot,
+  hasLiveCatalog,
   loadDefaultModels,
   loadHiddenPickerProviders,
   loadLastModelChoice,
@@ -212,6 +218,7 @@ import {
   subscribeProjectProviders,
 } from "../../sessions/model/projectProviders";
 import {
+  DEFAULT_PROVIDER_ACCOUNT_ID,
   newProviderAccount,
   providerAccounts,
   PROVIDER_ACCOUNT_PROVIDERS,
@@ -222,7 +229,13 @@ import {
   type ProviderAccount,
   type ProviderAccountProvider,
 } from "../../providers/model/providerAccounts";
-import { removeProviderAccountCredentials } from "../../providers/model/providerAccountCredentials";
+import {
+  claudeAccountEndpoint,
+  clearClaudeAccountEndpoint,
+  removeProviderAccountCredentials,
+  setClaudeAccountEndpoint,
+} from "../../providers/model/providerAccountCredentials";
+import { loadRateLimits } from "../../providers/model/rateLimitsCache";
 import {
   identityKey,
   identityOrganizationTag,
@@ -291,6 +304,19 @@ import {
 import { useTabGroupLogos } from "../../projects/hooks/useTabGroupLogos";
 import { ProjectLogoIcon } from "../../projects/ui/ProjectLogoIcon";
 import { ProjectMascot } from "../../projects/ui/ProjectMascot";
+import { PixelMascot } from "../../projects/ui/PixelMascot";
+import {
+  defaultMonoName,
+  listMonos,
+  monoLook,
+  monoProjectsPhrase,
+  monosSnapshot,
+  subscribeMonos,
+  updateMono,
+  type Mono,
+} from "../../monos/model/mono";
+import { resetMonoDefaults } from "../../monos/model/monoFiles";
+import { ConfirmReset } from "../../monos/ui/ConfirmReset";
 import {
   filterKeybindings,
   currentKeybindings,
@@ -306,7 +332,11 @@ import {
   loadLiveAgentsEnabled,
   loadModelControls,
   loadNotesEnabled,
+  loadMonosEnabled,
+  loadMonoMenuBarIcon,
   loadKeybindingOverrides,
+  saveMonoMenuBarIcon,
+  subscribeMonoMenuBarIcon,
   loadQuickComposerEnabled,
   loadQuickComposerShortcut,
   loadTabAnimationsEnabled,
@@ -322,6 +352,8 @@ import {
   saveLiveAgentsEnabled,
   saveModelControls,
   saveNotesEnabled,
+  saveMonosEnabled,
+  subscribeMonosEnabled,
   saveKeybindingOverride,
   validateKeybindingShortcut,
   saveQuickComposerEnabled,
@@ -361,6 +393,8 @@ import {
 } from "../../notifications/model/notifications";
 import {
   installPendingUpdate,
+  packageManagedInstall,
+  packageManagerHint,
   readAppVersion,
   runUpdateFlow,
   type UpdaterSnapshot,
@@ -557,6 +591,7 @@ export function SettingsView({
               ) : null}
               {section === "chat" ? <ChatPage /> : null}
               {section === "keybindings" ? <KeybindingsPage /> : null}
+              {section === "monos" ? <MonosPage /> : null}
               {section === "mcp" ? (
                 <McpSettings cwd={cwd} recents={recents} />
               ) : null}
@@ -1725,10 +1760,16 @@ function UpdateRow({
 
   useEffect(() => {
     let cancelled = false;
-    void readAppVersion().then((currentVersion) => {
-      if (cancelled) return;
-      setSnapshot((current) => ({ ...current, currentVersion }));
-    });
+    void Promise.all([readAppVersion(), packageManagedInstall()]).then(
+      ([currentVersion, packageManaged]) => {
+        if (cancelled) return;
+        setSnapshot((current) => ({
+          ...current,
+          currentVersion,
+          packageManaged: packageManaged ?? undefined,
+        }));
+      },
+    );
     return () => {
       cancelled = true;
     };
@@ -1758,7 +1799,9 @@ function UpdateRow({
             ? "You're on the latest version."
             : snapshot.phase === "error"
               ? (snapshot.error ?? "Update check failed.")
-              : "MonoCode updates itself from the release feed.";
+              : snapshot.packageManaged
+                ? packageManagerHint(snapshot.packageManaged)
+                : "MonoCode updates itself from the release feed.";
 
   return (
     <Row
@@ -1830,6 +1873,7 @@ function useAppearanceSettings(
     useState(loadChatBackgroundSessionOpacity);
   const [chatBackgroundScope, setChatBackgroundScope] =
     useState<ChatBackgroundScope>(loadChatBackgroundScope);
+  const [diffPalette, setDiffPalette] = useState<DiffPalette>(loadDiffPalette);
   const [newThreadBackgroundEffect, setBackgroundEffect] =
     useState<NewThreadBackgroundEffect>(loadNewThreadBackgroundEffect);
   const [chatBackgroundBusy, setChatBackgroundBusy] = useState(false);
@@ -1952,6 +1996,12 @@ function useAppearanceSettings(
     setChatBackgroundScope(next);
   }, []);
 
+  const onDiffPalette = useCallback((next: DiffPalette) => {
+    applyDiffPalette(next);
+    saveDiffPalette(next);
+    setDiffPalette(next);
+  }, []);
+
   const onNewThreadBackgroundEffect = useCallback(
     (next: NewThreadBackgroundEffect) => {
       setNewThreadBackgroundEffect(next);
@@ -1992,6 +2042,7 @@ function useAppearanceSettings(
       Math.round(CHAT_BACKGROUND_SESSION_OPACITY_DEFAULT * 100),
     );
     onChatBackgroundScope(CHAT_BACKGROUND_SCOPE_DEFAULT);
+    onDiffPalette(DIFF_PALETTE_DEFAULT);
     onNewThreadBackgroundEffect(NEW_THREAD_BACKGROUND_EFFECT_DEFAULT);
     if (chatBackgroundPath) void onClearChatBackground();
     onUiScale(Math.round(UI_SCALE_DEFAULT * 100));
@@ -2003,6 +2054,7 @@ function useAppearanceSettings(
     onChatBackgroundEmptyOpacity,
     onChatBackgroundSessionOpacity,
     onChatBackgroundScope,
+    onDiffPalette,
     onNewThreadBackgroundEffect,
     onClearChatBackground,
     onAccentColor,
@@ -2031,6 +2083,7 @@ function useAppearanceSettings(
     chatBackgroundEmptyOpacity,
     chatBackgroundSessionOpacity,
     chatBackgroundScope,
+    diffPalette,
     newThreadBackgroundEffect,
     chatBackgroundBusy,
     chatBackgroundError,
@@ -2050,6 +2103,7 @@ function useAppearanceSettings(
     onChatBackgroundEmptyOpacity,
     onChatBackgroundSessionOpacity,
     onChatBackgroundScope,
+    onDiffPalette,
     onNewThreadBackgroundEffect,
     onUiScale,
     onCollapsedProjectRailMode,
@@ -2091,6 +2145,22 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
           <AccentColorPicker
             value={appearance.accentColor}
             onChange={appearance.onAccentColor}
+          />
+        </Row>
+        <Row
+          id="diff-colors"
+          label="Diff colors"
+          description="Colors for added and removed lines. Colorblind and High contrast use blue and orange instead of green and red; High contrast adds stronger tints and text."
+        >
+          <Segmented
+            label="Diff colors"
+            value={appearance.diffPalette}
+            options={[
+              { value: "default", label: "Default" },
+              { value: "colorblind", label: "Colorblind" },
+              { value: "high-contrast", label: "High contrast" },
+            ]}
+            onChange={appearance.onDiffPalette}
           />
         </Row>
       </Group>
@@ -3326,6 +3396,13 @@ type AccountEditor = {
   provider: ProviderAccountProvider;
   accountId?: string;
   label: string;
+  /** Named Claude profiles can use an API token instead of a sign-in. */
+  auth?: "signin" | "token";
+  baseUrl?: string;
+  token?: string;
+  usageUrl?: string;
+  /** The profile already has a token, so leaving `token` blank keeps it. */
+  hasToken?: boolean;
 };
 
 function ProviderAccountsSettings() {
@@ -3351,11 +3428,30 @@ function ProviderAccountsSettings() {
       accountId: account.id,
       label: account.label,
     });
+    if (!accountCanUseToken(account.provider, account.id)) return;
+    void claudeAccountEndpoint(account.id)
+      .then((endpoint) => {
+        if (!endpoint) return;
+        setEditor((current) =>
+          current?.accountId === account.id && current.auth === undefined
+            ? {
+                ...current,
+                auth: "token",
+                baseUrl: endpoint.baseUrl ?? "",
+                usageUrl: endpoint.usageUrl ?? "",
+                hasToken: true,
+              }
+            : current,
+        );
+      })
+      .catch(() => {
+        // Without the endpoint the editor still renames the profile.
+      });
   };
 
   const submitEditor = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!editor || !editor.label.trim() || working) return;
+    if (!editor || !accountEditorReady(editor) || working) return;
     const key = editor.accountId
       ? `rename:${editor.provider}:${editor.accountId}`
       : `add:${editor.provider}`;
@@ -3363,10 +3459,24 @@ function ProviderAccountsSettings() {
     setError(null);
     try {
       if (editor.accountId) {
-        renameProviderAccount(editor.provider, editor.accountId, editor.label);
+        const accountId = editor.accountId;
+        if (accountCanUseToken(editor.provider, accountId)) {
+          if (editor.auth === "token") {
+            await setClaudeAccountEndpoint(accountId, editorEndpoint(editor));
+          } else if (editor.hasToken && editor.auth === "signin") {
+            await clearClaudeAccountEndpoint(accountId);
+            await loginHarness(editor.provider, accountId);
+          }
+          void loadRateLimits(editor.provider, accountId, true);
+        }
+        renameProviderAccount(editor.provider, accountId, editor.label);
       } else {
         const account = newProviderAccount(editor.provider, editor.label);
-        await loginHarness(editor.provider, account.id);
+        if (editor.auth === "token") {
+          await setClaudeAccountEndpoint(account.id, editorEndpoint(editor));
+        } else {
+          await loginHarness(editor.provider, account.id);
+        }
         saveProviderAccount(account);
       }
       setEditor(null);
@@ -3477,9 +3587,9 @@ function ProviderAccountsSettings() {
                     key={account.id}
                     editor={editor}
                     working={Boolean(working)}
-                    onLabel={(label) =>
+                    onChange={(patch) =>
                       setEditor((current) =>
-                        current ? { ...current, label } : current,
+                        current ? { ...current, ...patch } : current,
                       )
                     }
                     onCancel={() => setEditor(null)}
@@ -3558,9 +3668,9 @@ function ProviderAccountsSettings() {
                 <ProviderAccountEditor
                   editor={editor}
                   working={Boolean(working)}
-                  onLabel={(label) =>
+                  onChange={(patch) =>
                     setEditor((current) =>
-                      current ? { ...current, label } : current,
+                      current ? { ...current, ...patch } : current,
                     )
                   }
                   onCancel={() => setEditor(null)}
@@ -3583,29 +3693,59 @@ function ProviderAccountsSettings() {
   );
 }
 
+/** Only named Claude profiles can swap their sign-in for an API token. */
+function accountCanUseToken(
+  provider: ProviderAccountProvider,
+  accountId: string | undefined,
+): boolean {
+  return provider === "claude" && accountId !== DEFAULT_PROVIDER_ACCOUNT_ID;
+}
+
+function editorEndpoint(editor: AccountEditor) {
+  return {
+    baseUrl: editor.baseUrl ?? "",
+    token: editor.token ?? "",
+    usageUrl: editor.usageUrl ?? "",
+  };
+}
+
+/** A name, plus a token for a profile that uses one and has none yet. */
+function accountEditorReady(editor: AccountEditor): boolean {
+  if (!editor.label.trim()) return false;
+  if (editor.auth !== "token" || editor.hasToken) return true;
+  return Boolean(editor.token?.trim());
+}
+
 function ProviderAccountEditor({
   editor,
   working,
-  onLabel,
+  onChange,
   onCancel,
   onSubmit,
 }: {
   editor: AccountEditor;
   working: boolean;
-  onLabel: (label: string) => void;
+  onChange: (patch: Partial<AccountEditor>) => void;
   onCancel: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const adding = !editor.accountId;
+  const canUseToken = accountCanUseToken(editor.provider, editor.accountId);
+  const usesToken = canUseToken && editor.auth === "token";
+  // Leaving a token profile signs in with the browser on save.
+  const signsIn = adding
+    ? !usesToken
+    : Boolean(editor.hasToken) && editor.auth === "signin";
+  const fieldClass =
+    "flex h-8 min-w-0 flex-1 items-center overflow-hidden rounded-md border border-content/10 bg-content/[0.04] focus-within:border-accent/45";
+  const inputClass =
+    "h-full w-full bg-transparent px-2.5 text-[12px] text-content outline-none placeholder:text-content/25 disabled:opacity-50";
   return (
     <form
-      className="flex h-12 items-center border-b border-content/5 px-4 py-2 last:border-b-0"
+      className="flex flex-col gap-2 border-b border-content/5 px-4 py-2 last:border-b-0"
       onSubmit={onSubmit}
     >
-      <div
-        data-provider-account-editor-field
-        className="flex items-center pr-1 h-8 min-w-0 flex-1 overflow-hidden rounded-md border border-content/10 bg-content/[0.04] focus-within:border-accent/45"
-      >
+      <div data-provider-account-editor-field className={`${fieldClass} pr-1`}>
         <label className="h-full min-w-0 flex-1">
           <span className="sr-only">Account name</span>
           <input
@@ -3616,10 +3756,30 @@ function ProviderAccountEditor({
             disabled={working}
             placeholder="Work or Personal"
             aria-label={`${adding ? "New" : "Rename"} ${HARNESS_TITLE[editor.provider]} account`}
-            onChange={(event) => onLabel(event.target.value)}
-            className="h-full w-full bg-transparent px-2.5 text-[12px] text-content outline-none placeholder:text-content/25 disabled:opacity-50"
+            onChange={(event) => onChange({ label: event.target.value })}
+            className={inputClass}
           />
         </label>
+        {canUseToken ? (
+          <button
+            type="button"
+            disabled={working}
+            aria-pressed={usesToken}
+            title={
+              usesToken
+                ? "Sign in with a Claude account instead"
+                : "Use an API endpoint and token instead of signing in"
+            }
+            onClick={() => onChange({ auth: usesToken ? "signin" : "token" })}
+            className={`mr-1 flex h-6 shrink-0 items-center rounded-[4.5px] px-2.5 text-[11px] transition-transform duration-150 active:scale-[0.97] disabled:opacity-40 ${
+              usesToken
+                ? "bg-accent/15 text-accent"
+                : "bg-content/[0.05] text-content/45 hover:bg-content/10 hover:text-content"
+            }`}
+          >
+            API token
+          </button>
+        ) : null}
         <button
           type="button"
           disabled={working}
@@ -3630,17 +3790,66 @@ function ProviderAccountEditor({
         </button>
         <button
           type="submit"
-          disabled={working || !editor.label.trim()}
+          disabled={working || !accountEditorReady(editor)}
           className="ml-1 flex h-6 shrink-0 items-center gap-1.5 rounded-[4.5px] bg-content px-2.5 text-[11px] font-medium text-background-base transition-transform duration-150 hover:bg-content/85 active:scale-[0.97] disabled:cursor-default disabled:opacity-40"
         >
           {working ? <Loader className="size-3 animate-spin" /> : null}
-          {adding
+          {signsIn
             ? working
               ? "Waiting for browser…"
-              : "Sign in and add"
-            : "Save"}
+              : adding
+                ? "Sign in and add"
+                : "Sign in and save"
+            : adding
+              ? "Add"
+              : "Save"}
         </button>
       </div>
+      {usesToken ? (
+        <div className="flex gap-2">
+          <label className={fieldClass}>
+            <span className="sr-only">API base URL</span>
+            <input
+              type="url"
+              value={editor.baseUrl ?? ""}
+              disabled={working}
+              placeholder="Base URL (blank for api.anthropic.com)"
+              spellCheck={false}
+              onChange={(event) => onChange({ baseUrl: event.target.value })}
+              className={inputClass}
+            />
+          </label>
+          <label className={fieldClass}>
+            <span className="sr-only">API token</span>
+            <input
+              type="password"
+              value={editor.token ?? ""}
+              disabled={working}
+              placeholder={
+                editor.hasToken ? "New token (blank keeps current)" : "API token"
+              }
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => onChange({ token: event.target.value })}
+              className={inputClass}
+            />
+          </label>
+        </div>
+      ) : null}
+      {usesToken ? (
+        <label className={fieldClass}>
+          <span className="sr-only">Usage URL</span>
+          <input
+            type="url"
+            value={editor.usageUrl ?? ""}
+            disabled={working}
+            placeholder="Usage URL (optional, Claude usage format)"
+            spellCheck={false}
+            onChange={(event) => onChange({ usageUrl: event.target.value })}
+            className={inputClass}
+          />
+        </label>
+      ) : null}
     </form>
   );
 }
@@ -3700,9 +3909,9 @@ function ProviderRow({
     models.length > 0 ? resolveModel(harness, selectedModel) : null;
 
   useEffect(() => {
-    if (!available || models.length > 0) return;
+    if (!available || hasLiveCatalog(harness)) return;
     void refreshHarnessCatalogs([harness]);
-  }, [available, harness, models.length]);
+  }, [available, harness]);
 
   return (
     <Row
@@ -3729,6 +3938,14 @@ function ProviderRow({
           label={`${HARNESS_TITLE[harness]} model`}
           value={current.id}
           onChange={(next) => onModelChange(harness, next)}
+          onOpen={() => {
+            // Opening the dropdown is an explicit refresh: fallbacks keep
+            // `models` non-empty, and routine refreshes skip once a live
+            // catalog exists, so force this one past that skip.
+            if (available) {
+              void refreshHarnessCatalogs([harness], { force: true });
+            }
+          }}
           options={models.map((item) => ({
             value: item.id,
             label: item.name,
@@ -3935,6 +4152,121 @@ function formatDate(value: number): string {
   } catch {
     return "";
   }
+}
+
+/** Monos on or off, and each Mono the user has. */
+function MonosPage() {
+  const enabled = useSyncExternalStore(
+    subscribeMonosEnabled,
+    loadMonosEnabled,
+    () => true,
+  );
+  const menuBarIcon = useSyncExternalStore(
+    subscribeMonoMenuBarIcon,
+    loadMonoMenuBarIcon,
+    () => true,
+  );
+  const snapshot = useSyncExternalStore(subscribeMonos, monosSnapshot);
+  const monos = useMemo(() => listMonos(), [snapshot]);
+
+  return (
+    <>
+      <Group title="Monos">
+        <Row
+          id="monos-enabled"
+          label="Show monos"
+          description="Agents of your own on the project rail. Each works on the projects you give it, remembers what matters and picks up habits it runs on its own. Turn this off to hide them."
+        >
+          <Toggle label="Show monos" on={enabled} onChange={saveMonosEnabled} />
+        </Row>
+        {IS_MAC && (
+          <Row
+            id="mono-menu-bar-icon"
+            label="Menu bar icon"
+            description="Chat with a Mono or open the quick composer from the macOS menu bar. Turn this off to hide the icon."
+          >
+            <Toggle
+              label="Menu bar icon"
+              on={menuBarIcon}
+              onChange={saveMonoMenuBarIcon}
+            />
+          </Row>
+        )}
+      </Group>
+      <Group
+        id="mono-list"
+        title="Your monos"
+        description="Choose whether new sessions started by each Mono appear in the sidebar. Hidden sessions remain saved and can be opened from the Mono's chat. Add a Mono with the plus on the rail and choose its projects from its details."
+      >
+        {monos.length ? (
+          monos.map((mono) => <MonoRow key={mono.id} mono={mono} />)
+        ) : (
+          <p className="px-4 py-3.5 text-[12px] text-content/45">
+            No monos yet.
+          </p>
+        )}
+      </Group>
+    </>
+  );
+}
+
+function MonoRow({ mono }: { mono: Mono }) {
+  const look = monoLook(mono);
+  return (
+    <Row
+      label={
+        <span className="flex min-w-0 items-center gap-2">
+          <PixelMascot
+            name={look.mascot}
+            color={look.color}
+            still
+            className="size-4 shrink-0"
+          />
+          <span className="truncate">{look.name}</span>
+        </span>
+      }
+      description={
+        look.projects.length
+          ? `Works on ${monoProjectsPhrase(look.projects)}`
+          : "No projects yet"
+      }
+    >
+      <span className="text-[12px] leading-5 text-content/50">
+        Show Mono spawned session on the sidebar
+      </span>
+      <Toggle
+        label={`Show sessions started by ${look.name} in sidebar`}
+        on={mono.showStartedSessionsInSidebar !== false}
+        onChange={(on) =>
+          updateMono(mono.id, (entry) => ({
+            ...entry,
+            showStartedSessionsInSidebar: on,
+          }))
+        }
+      />
+      <ConfirmReset
+        label="Reset Mono"
+        title={`Reset ${look.name} to its defaults?`}
+        body={`Its soul goes back to the default and its name to ${defaultMonoName(look.mascot)}. Changes to its soul can't be recovered.`}
+        kept="Its conversation, projects, memory and habits will be kept."
+        failure="Could not reset the Mono."
+        onConfirm={() => resetMonoDefaults(mono.id)}
+      >
+        {(open, ref) => (
+          <button
+            ref={ref}
+            type="button"
+            title="Reset to defaults"
+            aria-label={`Reset ${look.name} to defaults`}
+            onClick={open}
+            className="grid size-7 place-items-center rounded-md text-content/40 transition-transform duration-150 hover:bg-content/10 hover:text-content active:scale-[0.96]"
+          >
+            <RotateCcw className="size-3.5" strokeWidth={1.75} />
+          </button>
+        )}
+      </ConfirmReset>
+    </Row>
+  );
 }
 
 function PageHeader({
@@ -4259,11 +4591,13 @@ function Select({
   value,
   options,
   onChange,
+  onOpen,
 }: {
   label: string;
   value: string;
   options: { value: string; label: string; icon?: ReactNode }[];
   onChange: (value: string) => void;
+  onOpen?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(() =>
@@ -4289,6 +4623,11 @@ function Select({
       ),
     );
   }, [open, value, options]);
+
+  useEffect(() => {
+    if (open) onOpen?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

@@ -24,6 +24,12 @@ import {
   HARNESS_TITLE,
 } from "../../sessions/model/session";
 import { saveMaskEmails, saveShowRemainingUsage } from "../model/displayPrefs";
+import {
+  createMono,
+  findMono,
+  monoLook,
+  updateMono,
+} from "../../monos/model/mono";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async () => undefined),
@@ -136,8 +142,31 @@ describe("settings pages", () => {
     ).toBe("false");
   });
 
-  it("keeps account emails blurred until clicked and hides them when settings reopen", async () => {
-    saveMaskEmails(true);
+  it("saves each Mono's session visibility and restores it when settings reopen", async () => {
+    const mono = createMono();
+    const other = createMono();
+    const toggle = (id: string) =>
+      container.querySelector<HTMLButtonElement>(
+        `[role="switch"][aria-label="Show sessions started by ${monoLook(findMono(id)!).name} in sidebar"]`,
+      )!;
+    await render("monos");
+    expect(toggle(mono.id).getAttribute("aria-checked")).toBe("true");
+    expect(toggle(other.id).getAttribute("aria-checked")).toBe("true");
+    await act(async () => toggle(mono.id).click());
+    expect(toggle(mono.id).getAttribute("aria-checked")).toBe("false");
+    expect(findMono(mono.id)?.showStartedSessionsInSidebar).toBe(false);
+    expect(toggle(other.id).getAttribute("aria-checked")).toBe("true");
+    await render("general");
+    await render("monos");
+    expect(toggle(mono.id).getAttribute("aria-checked")).toBe("false");
+    await act(async () => updateMono(mono.id, (entry) => ({
+      ...entry,
+      showStartedSessionsInSidebar: true,
+    })));
+    expect(toggle(mono.id).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("blurs account emails by default and hides them when settings reopen", async () => {
     vi.mocked(invoke).mockImplementation(async (command, args) => {
       if (command === "provider_account_identity") {
         const { provider } = args as { provider: string };
@@ -174,6 +203,7 @@ describe("settings pages", () => {
   });
 
   it("shows used usage and plain emails until the options are turned on", async () => {
+    saveMaskEmails(false);
     vi.mocked(invoke).mockImplementation(async (command) =>
       command === "provider_account_identity"
         ? { email: "user@example.com", plan: "Pro" }
@@ -385,6 +415,60 @@ describe("settings pages", () => {
       accountId: "account-work",
     });
     expect(providerAccounts("codex")).toHaveLength(1);
+  });
+
+  it("adds a Claude profile on an API token without signing in", async () => {
+    await render("providers");
+    const setValue = async (input: HTMLInputElement, value: string) => {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          "value",
+        )!.set!.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    const addButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Add account",
+    )!;
+    await act(async () => addButton.click());
+    await setValue(
+      container.querySelector<HTMLInputElement>(
+        '[aria-label="New Claude Code account"]',
+      )!,
+      "Gateway",
+    );
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('button[aria-pressed="false"]')!
+        .click(),
+    );
+    const submit = container.querySelector<HTMLButtonElement>(
+      'button[type="submit"]',
+    )!;
+    expect(submit.textContent).toBe("Add");
+    expect(submit.disabled).toBe(true);
+    const [baseUrl, usageUrl] = container.querySelectorAll<HTMLInputElement>(
+      'input[type="url"]',
+    );
+    await setValue(baseUrl!, "https://gw.example.dev");
+    await setValue(usageUrl!, "https://admin.example.dev/api/usage");
+    await setValue(
+      container.querySelector<HTMLInputElement>('input[type="password"]')!,
+      "secret",
+    );
+    await act(async () => submit.click());
+
+    const added = providerAccounts("claude").find(
+      (account) => account.label === "Gateway",
+    );
+    expect(added).toBeDefined();
+    expect(invoke).toHaveBeenCalledWith("provider_account_set_endpoint", {
+      accountId: added!.id,
+      baseUrl: "https://gw.example.dev",
+      token: "secret",
+      usageUrl: "https://admin.example.dev/api/usage",
+    });
   });
 
   it("validates and stores Codex and OpenCode binary overrides", async () => {

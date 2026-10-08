@@ -1,3 +1,4 @@
+import { TurnNotReadyError } from "../../core/types";
 import { nativeModelId } from "../../../../features/sessions/model/models";
 import { sameProviderAccountId } from "../../../../features/providers/model/providerAccounts";
 import type {
@@ -284,7 +285,7 @@ export async function compactClaudeContext(
 
 export async function steerClaudeTurn(input: SteerTurnInput): Promise<void> {
   const live = liveByThread.get(input.sessionId);
-  if (!live?.activeTurn) throw new Error("No active turn to steer");
+  if (!live?.activeTurn) throw new TurnNotReadyError("No active turn to steer");
 
   const message = buildClaudeUserMessage({
     text: input.text,
@@ -625,6 +626,7 @@ async function runTurn(live: Live, input: SendTurnInput): Promise<void> {
 
   try {
     await writeJson(input.sessionId, message);
+    input.onAccepted?.();
     settlePendingTurn(live);
     await turnPromise;
   } catch (error) {
@@ -1006,8 +1008,7 @@ function handleResult(live: Live, rec: Record<string, unknown>): void {
   // A refused window can still fall back to another model, so only a turn
   // that ended in error was stopped by it.
   const turnErrored = rec.is_error === true || result.status === "failed";
-  const usageLimit =
-    live.usageLimit ?? (isUsageLimitResult(rec) ? {} : null);
+  const usageLimit = live.usageLimit ?? (isUsageLimitResult(rec) ? {} : null);
   live.usageLimit = null;
   if (usageLimit && turnErrored && !live.cancelled) {
     live.onEvent({ type: "usage.limited", ...usageLimit });
@@ -1024,10 +1025,7 @@ async function handleControlRequest(
   control: ClaudeControlRequest,
 ): Promise<void> {
   if (control.subtype !== "can_use_tool" && control.subtype !== "permission") {
-    await writeJson(
-      sessionId,
-      buildControlResponse(control.requestId, {}),
-    );
+    await writeJson(sessionId, buildControlResponse(control.requestId, {}));
     return;
   }
 
@@ -1235,10 +1233,17 @@ function handleAgentLifecycle(
     }
     live.agentTasks.set(started.taskId, {
       taskId: started.taskId,
+      // A task listed first already has its row; only the Agent call that
+      // spawned it takes over. A resumed run names the SendMessage that woke
+      // it, and moving there would strand that row as a run that never ends.
       toolUseId:
-        started.toolUseId ??
+        (isAgentCall(live, started.toolUseId)
+          ? started.toolUseId
+          : undefined) ??
         existingTask?.toolUseId ??
-        unclaimedAgentCall(live, started.description),
+        started.toolUseId ??
+        unclaimedAgentCall(live, started.description) ??
+        agentRowId(started.description),
       description: started.description,
       backgrounded: started.backgrounded,
     });
@@ -1260,7 +1265,9 @@ function handleAgentLifecycle(
         progress.toolUseId ?? unclaimedAgentCall(live, task.description);
       if (task.toolUseId) syncBackgroundWait(live);
     }
-    const title = progress.description || task?.description || "Subagent";
+    // Progress can describe the step in flight rather than the run; the row
+    // keeps the name it started with.
+    const title = task?.description || progress.description || "Subagent";
     const detail =
       progress.summary ||
       progress.lastToolName ||
@@ -1346,7 +1353,8 @@ function handleAgentLifecycle(
     if (live.agentTasks.has(row.taskId)) continue;
     // The list carries no tool_use_id and often lands before task_started, so
     // find the Agent call that spawned it rather than opening a second row.
-    const toolUseId = unclaimedAgentCall(live, row.description);
+    const toolUseId =
+      unclaimedAgentCall(live, row.description) ?? agentRowId(row.description);
     live.agentTasks.set(row.taskId, {
       taskId: row.taskId,
       toolUseId,
@@ -1450,10 +1458,7 @@ function noteSubagentTool(
  * never joins the parent transcript — that would read as the main agent
  * talking — but it is the most legible thing in the panel for its own row.
  */
-function noteSubagentNarration(
-  live: Live,
-  rec: Record<string, unknown>,
-): void {
+function noteSubagentNarration(live: Live, rec: Record<string, unknown>): void {
   const parent = subagentParent(live, rec);
   if (!parent) return;
   const model = stringField(asRecord(rec.message), "model");
@@ -1488,10 +1493,7 @@ function noteSubagentNarration(
 }
 
 /** Settles the subagent's own tool rows once their results come back. */
-function noteSubagentResults(
-  live: Live,
-  rec: Record<string, unknown>,
-): void {
+function noteSubagentResults(live: Live, rec: Record<string, unknown>): void {
   const parent = subagentParent(live, rec);
   if (!parent) return;
   for (const result of toolResultsFromUserMessage(rec)) {
@@ -1530,6 +1532,16 @@ function unclaimedAgentCall(
   return match;
 }
 
+function isAgentCall(live: Live, toolUseId: string | undefined): boolean {
+  const tool = toolUseId ? live.toolsById.get(toolUseId) : undefined;
+  return !!tool && isAgentToolName(tool.name);
+}
+
+/** The row a task gets when no Agent call in this turn spawned it. */
+function agentRowId(description: string): string {
+  return `agent:${description}`;
+}
+
 function upsertAgentTool(
   live: Live,
   callId: string | undefined,
@@ -1537,7 +1549,7 @@ function upsertAgentTool(
   status: string,
   detail?: string,
 ): void {
-  const id = callId ?? `agent:${title}`;
+  const id = callId ?? agentRowId(title);
   const existing = live.toolsById.get(id);
   if (!existing) {
     live.toolsById.set(id, {
@@ -1652,7 +1664,8 @@ function noteClaudeTurnStarted(live: Live): void {
 function showBackgroundRows(live: Live): void {
   if (!live.activeTurn || live.cancelled) return;
   for (const [taskId, task] of live.backgroundTasks) {
-    if (live.backgroundRows.has(taskId) || live.agentTasks.has(taskId)) continue;
+    if (live.backgroundRows.has(taskId) || live.agentTasks.has(taskId))
+      continue;
     const source = task.toolUseId
       ? live.toolsById.get(task.toolUseId)
       : undefined;
@@ -1666,7 +1679,9 @@ function showBackgroundRows(live: Live): void {
       kind: source ? toolKindFromName(source.name) : "execute",
       status: "in_progress",
       background: true,
-      ...(source ? { preview: previewFromTool(source.name, source.input) } : {}),
+      ...(source
+        ? { preview: previewFromTool(source.name, source.input) }
+        : {}),
     });
   }
 }
