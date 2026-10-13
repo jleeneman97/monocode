@@ -33,6 +33,16 @@ export const MONO_COLORS = [
  */
 export type Mono = {
   id: string;
+  /**
+   * A project coordinator rather than a Mono of its own: it lives in the
+   * rail's Claude Projects section, works on one folder, and hands the work
+   * to threads (see `features/coordinator`).
+   */
+  kind?: "project";
+  /** A project's coordinator starts fresh past this many tokens. */
+  compactAt?: number;
+  /** A project's own coordinator prompt, in place of the default. */
+  coordinatorPrompt?: string;
   /** Its conversation; absent until it is first opened. */
   sessionId?: string;
   /** Replaces the mascot's own name. */
@@ -43,6 +53,8 @@ export type Mono = {
   projects: string[];
   /** New sessions appear in the project sidebar unless explicitly disabled. */
   showStartedSessionsInSidebar?: boolean;
+  /** Files the sessions it starts into a sidebar folder named after it. */
+  useSidebarFolders?: boolean;
   /** Superseded by SOUL.md; only read once, to seed it. */
   instructions?: string;
   /**
@@ -156,6 +168,14 @@ function parseMono(value: unknown): Mono | undefined {
   const legacyProject = text("legacyProject");
   return {
     id: entry.id,
+    ...(entry.kind === "project" ? { kind: "project" as const } : {}),
+    ...(typeof entry.compactAt === "number" && Number.isFinite(entry.compactAt)
+      ? { compactAt: entry.compactAt }
+      : {}),
+    ...(typeof entry.coordinatorPrompt === "string" &&
+    entry.coordinatorPrompt.trim()
+      ? { coordinatorPrompt: entry.coordinatorPrompt }
+      : {}),
     ...(sessionId ? { sessionId } : {}),
     ...(name ? { name } : {}),
     mascot: text("mascot") ?? PROJECT_MASCOTS[0].name,
@@ -168,6 +188,7 @@ function parseMono(value: unknown): Mono | undefined {
     ...(typeof entry.showStartedSessionsInSidebar === "boolean"
       ? { showStartedSessionsInSidebar: entry.showStartedSessionsInSidebar }
       : {}),
+    ...(entry.useSidebarFolders === true ? { useSidebarFolders: true } : {}),
     ...(instructions ? { instructions } : {}),
     ...(legacyProject ? { legacyProject } : {}),
   };
@@ -179,6 +200,51 @@ export function listMonos(): Mono[] {
   const parsed = readJson(ROSTER_KEY);
   if (!Array.isArray(parsed)) return [];
   return parsed.flatMap((entry) => parseMono(entry) ?? []);
+}
+
+/** Monos of their own, without the project coordinators. */
+export function listAgentMonos(): Mono[] {
+  return listMonos().filter((mono) => mono.kind !== "project");
+}
+
+/** The project coordinators, in the order the rail shows them. */
+export function listCoordinatorProjects(): Mono[] {
+  return listMonos().filter((mono) => mono.kind === "project");
+}
+
+export function isCoordinatorProject(
+  mono: Pick<Mono, "kind"> | undefined,
+): boolean {
+  return mono?.kind === "project";
+}
+
+/** Whether this conversation is a project coordinator's. */
+export function isCoordinatorSession(sessionId: string): boolean {
+  return isCoordinatorProject(monoForSession(sessionId));
+}
+
+/**
+ * A new project coordinator for one folder, named by the user. Its standing
+ * instructions are seeded into SOUL.md the first time its files load.
+ */
+export function createCoordinatorProject(input: {
+  name: string;
+  path: string;
+  instructions?: string;
+}): Mono {
+  const roster = listMonos();
+  const mono: Mono = {
+    id: newMonoId(),
+    kind: "project",
+    name: input.name.trim(),
+    ...nextMonoLook(roster),
+    projects: uniqueProjects([input.path]),
+    ...(input.instructions?.trim()
+      ? { instructions: input.instructions.trim() }
+      : {}),
+  };
+  saveRoster([...roster, mono]);
+  return mono;
 }
 
 function saveRoster(roster: readonly Mono[]): void {

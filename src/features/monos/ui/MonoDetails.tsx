@@ -1,8 +1,28 @@
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
+import { SearchableSelect } from "../../../shared/ui/SearchableSelect";
+import { CoordinatorPromptPage } from "../../coordinator/ui/CoordinatorPromptPage";
+import {
+  COORDINATOR_COMPACT_OPTIONS,
+  COORDINATOR_ROTATE_TOKENS,
+  coordinatorCompactAt,
+} from "../../coordinator/model/coordinator";
 import type { HarnessId, RuntimeMode } from "../../sessions/model/session";
 import { AccessPicker } from "../../sessions/ui/AccessPicker";
 import { ModelPicker, ModelSettingRows } from "../../sessions/ui/ModelPicker";
-import type { MonoLook, MonoState } from "../model/mono";
+import {
+  findMono,
+  monosSnapshot,
+  subscribeMonos,
+  updateMono,
+  type MonoLook,
+  type MonoState,
+} from "../model/mono";
 import {
   loadMonoFiles,
   subscribeMonoFiles,
@@ -15,6 +35,7 @@ import { memoryLines } from "../model/monoMemory";
 import { HabitPage } from "./HabitPage";
 import { NewHabitPage } from "./NewHabitPage";
 import { MonoProjects } from "./MonoProjects";
+import { MonoPreferencesPage } from "./MonoPreferencesPage";
 import { MonoSettingsPage } from "./MonoSettingsPage";
 import { habitActions, HabitsList, useHabits } from "./MonoHabits";
 import { MemoryPage, SoulPage } from "./MonoFilePages";
@@ -24,7 +45,9 @@ import { MonoSidebar, MonoSidebarHeader } from "./MonoSidebar";
 
 /** A page opened directly from Details, or one habit inside its list. */
 type Route =
-  | { kind: "habits" | "soul" | "memory" | "new-habit" }
+  | {
+      kind: "habits" | "soul" | "memory" | "settings" | "new-habit" | "prompt";
+    }
   | { kind: "habit"; id: string };
 
 type Props = {
@@ -45,11 +68,13 @@ type Props = {
   onClose: () => void;
   onReset?: () => Promise<void>;
   windowControls?: ReactNode;
+  /** A project's coordinator: one folder, and a context limit to set. */
+  coordinator?: boolean;
 };
 
 /**
  * The Mono's profile, model, permissions and projects in one panel. Its habits,
- * soul and memory open directly as pages that slide over it.
+ * soul, memory and settings open directly as pages that slide over it.
  */
 export function MonoDetails({
   open,
@@ -68,6 +93,7 @@ export function MonoDetails({
   onClose,
   onReset,
   windowControls,
+  coordinator = false,
 }: Props) {
   const files = useMonoFiles(monoId, state.status);
   const habits = useHabits(monoId, state.status);
@@ -109,6 +135,13 @@ export function MonoDetails({
           ),
         },
       ];
+    if (route.kind === "prompt")
+      return [
+        {
+          key: "prompt",
+          node: <CoordinatorPromptPage monoId={monoId} onBack={back} />,
+        },
+      ];
     if (route.kind === "soul")
       return [
         {
@@ -119,6 +152,7 @@ export function MonoDetails({
               agent={agent}
               files={files}
               onBack={back}
+              coordinator={coordinator}
             />
           ),
         },
@@ -128,6 +162,20 @@ export function MonoDetails({
         {
           key: "memory",
           node: <MemoryPage monoId={monoId} files={files} onBack={back} />,
+        },
+      ];
+    if (route.kind === "settings")
+      return [
+        {
+          key: "settings",
+          node: (
+            <MonoPreferencesPage
+              monoId={monoId}
+              agent={agent}
+              onBack={back}
+              onReset={onReset}
+            />
+          ),
         },
       ];
     if (route.kind === "new-habit")
@@ -166,18 +214,21 @@ export function MonoDetails({
     <MonoSidebar
       open={open}
       kind="details"
-      label={`${agent.name} details`}
+      label={coordinator ? `${agent.name} settings` : `${agent.name} details`}
       color={agent.color}
       windowControls={windowControls}
     >
       <PanelStack pages={pages}>
         {/* Pages replace this header too, keeping their back button at the top. */}
-        <MonoSidebarHeader title="Details" onClose={onClose} />
+        <MonoSidebarHeader
+          title={coordinator ? "Project settings" : "Details"}
+          onClose={onClose}
+        />
         <MonoSettingsPage
           monoId={monoId}
           agent={agent}
           onOpen={(page) => push({ kind: page })}
-          onReset={onReset}
+          coordinator={coordinator}
           counts={{
             habits: habits?.length,
             memory: files ? memoryLines(files.memory).length : undefined,
@@ -216,9 +267,15 @@ export function MonoDetails({
                 variant="plain"
               />
             </Property>
-            <Property label="Projects">
-              <MonoProjects monoId={monoId} projects={agent.projects} />
-            </Property>
+            {coordinator ? (
+              <Property label="Compact at">
+                <CompactAtPicker monoId={monoId} />
+              </Property>
+            ) : (
+              <Property label="Projects">
+                <MonoProjects monoId={monoId} projects={agent.projects} />
+              </Property>
+            )}
           </dl>
         </MonoSettingsPage>
       </PanelStack>
@@ -255,4 +312,41 @@ function useMonoFiles(
     // A turn ending is when the agent may have written to its memory.
   }, [monoId, working]);
   return files;
+}
+
+function formatTokens(tokens: number): string {
+  return `${Math.round(tokens / 1000)}k tokens`;
+}
+
+/**
+ * How full the coordinator's context gets before its next turn starts fresh
+ * with a brief of the conversation.
+ */
+function CompactAtPicker({ monoId }: { monoId: string }) {
+  const snapshot = useSyncExternalStore(subscribeMonos, monosSnapshot);
+  const current = useMemo(
+    () => coordinatorCompactAt(findMono(monoId)?.compactAt),
+    [monoId, snapshot],
+  );
+  const options = [...new Set([...COORDINATOR_COMPACT_OPTIONS, current])].sort(
+    (a, b) => a - b,
+  );
+  return (
+    <SearchableSelect
+      label="Compact the coordinator at"
+      value={String(current)}
+      searchable={false}
+      variant="transparent"
+      options={options.map((tokens) => ({
+        value: String(tokens),
+        label:
+          tokens === COORDINATOR_ROTATE_TOKENS
+            ? `${formatTokens(tokens)} (default)`
+            : formatTokens(tokens),
+      }))}
+      onChange={(value) =>
+        updateMono(monoId, (mono) => ({ ...mono, compactAt: Number(value) }))
+      }
+    />
+  );
 }

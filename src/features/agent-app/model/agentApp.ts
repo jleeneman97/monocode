@@ -16,9 +16,12 @@ import {
   type Session,
 } from "../../sessions/model/session";
 import {
+  addSessionToFolder,
+  createFolderWithSessions,
   loadSessionFolders,
   placeSessionInFolder,
   saveSessionFolders,
+  setFolderCustomColor,
 } from "../../sessions/model/sessionFolders";
 import {
   normalizeNoteTags,
@@ -102,7 +105,7 @@ export type AgentAppHost = {
     prompt: string,
     requestId: string,
     notifyMonoId?: string,
-  ): Promise<{ alreadySubmitted: boolean }>;
+  ): Promise<{ alreadySubmitted: boolean; queued?: boolean }>;
   draft(
     id: string,
     prompt: string,
@@ -134,6 +137,8 @@ export type AgentAppHost = {
     id: string;
     projects: readonly string[];
     showStartedSessionsInSidebar?: boolean;
+    /** Files the sessions it starts into a folder named after it. */
+    folder?: { name: string; color: string };
   } | undefined;
   /** A hidden run of one of a Mono's habits: it may remember, not schedule. */
   isHabitRun?(sessionId: string): boolean;
@@ -175,6 +180,7 @@ const FIELDS = new Map<string, readonly string[]>([
     "sessions.start",
     [
       "prompt",
+      "title",
       "draft",
       "harness",
       "model",
@@ -365,6 +371,28 @@ export function notePreview(body: string): string {
     .slice(0, 400);
 }
 
+/**
+ * Puts a session a Mono started into the sidebar folder named after it,
+ * making that folder in its color the first time.
+ */
+function fileInMonoFolder(
+  cwd: string,
+  sessionId: string,
+  folder: { name: string; color: string },
+): void {
+  const folders = loadSessionFolders(cwd);
+  const own = folders.find((entry) => entry.name === folder.name);
+  if (own) {
+    saveSessionFolders(cwd, addSessionToFolder(folders, own.id, sessionId));
+    return;
+  }
+  const created = createFolderWithSessions(folders, [sessionId], folder.name);
+  saveSessionFolders(
+    cwd,
+    setFolderCustomColor(created.folders, created.id, folder.color),
+  );
+}
+
 function startLaunch(
   source: Session,
   input: Record<string, unknown>,
@@ -372,6 +400,7 @@ function startLaunch(
 ): QuickLaunch {
   const cwd = requireProject(source, input, host);
   const prompt = agentPrompt(input.prompt);
+  const title = optionalString(input.title, "title", 120)?.trim();
   const draft = input.draft ?? false;
   if (typeof draft !== "boolean") throw new Error("draft must be a boolean");
   const harness = input.harness ?? source.harness;
@@ -441,6 +470,7 @@ function startLaunch(
   return {
     cwd,
     prompt,
+    ...(title ? { title } : {}),
     ...(host.monoOf?.(source.id)?.showStartedSessionsInSidebar === false
       ? { sidebarHidden: true }
       : {}),
@@ -992,7 +1022,8 @@ export async function handleAgentApp(
         sessionId: id,
         submitted: true,
         ...result,
-        ...(notifyMonoId ? { notifyOnComplete: true } : {}),
+        // A queued message is delivered later with no completion report.
+        ...(notifyMonoId && !result.queued ? { notifyOnComplete: true } : {}),
       };
     }
     case "sessions.draft": {
@@ -1078,6 +1109,9 @@ export async function handleAgentApp(
         );
       else if (notifyMonoId) await host.start(launch, id, undefined, notifyMonoId);
       else await host.start(launch, id);
+      const folder = host.monoOf?.(source.id)?.folder;
+      if (folder && !launch.sidebarHidden)
+        fileInMonoFolder(launch.cwd, id, folder);
       return {
         id,
         cwd: launch.cwd,

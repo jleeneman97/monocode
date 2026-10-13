@@ -72,7 +72,7 @@ describe("background work", () => {
     expect(session.backgroundTasks).toEqual([
       { id: "b1", description: "npm test" },
     ]);
-    expect(sessionWorking({ ...session, busy: true })).toBe(false);
+    expect(sessionWorking({ ...session, busy: true })).toBe(true);
 
     session = applyHarnessEvent(session, {
       type: "background.updated",
@@ -89,7 +89,7 @@ describe("background work", () => {
     expect(session.backgroundTasks).toBeUndefined();
   });
 
-  it("keeps a yielded turn working while a subagent still runs", () => {
+  it("keeps a yielded turn working while its background work runs", () => {
     let session = appendUser(newSession("claude", "/tmp"), "hi");
     session = applyHarnessEvent(session, {
       type: "background.updated",
@@ -104,7 +104,8 @@ describe("background work", () => {
       type: "background.updated",
       tasks: [{ id: "b1", description: "npm run dev" }],
     });
-    expect(sessionWorking({ ...session, busy: true })).toBe(false);
+    expect(sessionWorking({ ...session, busy: true })).toBe(true);
+    expect(sessionWorking(stopStreaming(session))).toBe(false);
   });
 });
 
@@ -1635,5 +1636,22 @@ describe("subagent steps", () => {
 
     expect(session.blocks[0].tool?.status).toBe("completed");
     expect(session.blocks[0].agentRun?.steps).toHaveLength(1);
+  });
+});
+
+describe("forwarded turns", () => {
+  it("keeps who forwarded a new or steered turn", () => {
+    const started = appendUser(newSession("claude", "/tmp"), "Fix it", [], {
+      appRequestId: "app-coordinator-1",
+      forwardedBy: "Checkout coordinator",
+    });
+    expect(started.blocks.at(-1)).toMatchObject({
+      appRequestId: "app-coordinator-1",
+      forwardedBy: "Checkout coordinator",
+    });
+    const steered = appendSteerUser(started, "Also this", [], {
+      forwardedBy: "Checkout coordinator",
+    });
+    expect(steered.blocks.at(-1)?.forwardedBy).toBe("Checkout coordinator");
   });
 });

@@ -166,6 +166,44 @@ describe("agent app commands", () => {
     );
   });
 
+  it("files a Mono's sessions into a folder named after it", async () => {
+    const { source, host } = fixture();
+    host.isMono = () => true;
+    host.monoOf = () => ({
+      id: "mono",
+      projects: [source.cwd],
+      folder: { name: "Captain Jack", color: "#5b8def" },
+    });
+    for (const request of ["first", "second"])
+      await handleAgentApp(source, request, "sessions.start", {
+        prompt: "Review the project",
+        notifyOnComplete: false,
+      }, host);
+    expect(loadSessionFolders(source.cwd)).toEqual([
+      expect.objectContaining({
+        name: "Captain Jack",
+        customColor: "#5b8def",
+        sessionIds: ["app-lead-first", "app-lead-second"],
+      }),
+    ]);
+  });
+
+  it("leaves a hidden Mono session out of its folder", async () => {
+    const { source, host } = fixture();
+    host.isMono = () => true;
+    host.monoOf = () => ({
+      id: "mono",
+      projects: [source.cwd],
+      showStartedSessionsInSidebar: false,
+      folder: { name: "Captain Jack", color: "#5b8def" },
+    });
+    await handleAgentApp(source, "hidden", "sessions.start", {
+      prompt: "Review the project",
+      notifyOnComplete: false,
+    }, host);
+    expect(loadSessionFolders(source.cwd)).toEqual([]);
+  });
+
   describe.each([
     ["sessions.stop", "stopped"],
     ["sessions.archive", "archived"],
@@ -445,6 +483,21 @@ describe("agent app commands", () => {
       "app-lead-monitored-send",
       "lead",
     );
+  });
+
+  it("promises no completion report for a follow-up queued behind a busy turn", async () => {
+    const { source, host } = fixture();
+    host.isMono = (id) => id === source.id;
+    host.send = vi.fn(async () => ({ alreadySubmitted: false, queued: true }));
+    const result = await handleAgentApp(
+      source,
+      "queued-send",
+      "sessions.send",
+      { sessionId: "other", prompt: "Also this", notifyOnComplete: true },
+      host,
+    );
+    expect(result).toMatchObject({ submitted: true, queued: true });
+    expect(result).not.toHaveProperty("notifyOnComplete");
   });
 
   it.each([
