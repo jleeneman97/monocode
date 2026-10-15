@@ -96,6 +96,7 @@ import { MonoSessionsPanel } from "../features/monos/ui/MonoSessionsPanel";
 import { ThreadsList } from "../features/coordinator/ui/ThreadsList";
 import { ThreadsButton } from "../features/coordinator/ui/ThreadsButton";
 import { ThreadPanel } from "../features/coordinator/ui/ThreadPanel";
+import { ProjectPanelWidth } from "../features/coordinator/ui/projectPanelWidth";
 import {
   monoSpawnedSessions,
   recordMonoSpawnedSession,
@@ -590,7 +591,6 @@ import {
   coordinatorContext,
   coordinatorCompactAt,
   coordinatorOverBudget,
-  coordinatorPromptKey,
   COORDINATOR_PROMPT_VERSION,
   allProjectThreadIds,
   forgetProjectThreads,
@@ -4985,6 +4985,7 @@ function Workspace({
     [invalidateLoadedSession, stopSessionForRemoval],
   );
 
+  const closeMonoPanelsRef = useRef<() => void>(() => {});
   /** A project's thread opens in its project, wherever it was picked from. */
   const openThreadInProjectRef = useRef<
     (projectId: string, sessionId: string) => Promise<void>
@@ -5102,6 +5103,8 @@ function Workspace({
         }
       }
       setOpenThreadIds((previous) => ({ ...previous, [projectId]: sessionId }));
+      if (monoForSession(monoViewIdRef.current ?? "")?.id === projectId)
+        closeMonoPanelsRef.current();
       // Another project or view opened while it loaded: leave its focus be.
       if (monoForSession(monoViewIdRef.current ?? "")?.id !== projectId) return;
       setThreadPaneFocused(true);
@@ -5156,14 +5159,27 @@ function Workspace({
     [dropOpenThread],
   );
 
+  /** A project's right side shows one thing: its threads take its place. */
+  const closeMonoPanels = useCallback(() => {
+    setMonoDetailsOpen(false);
+    setMonoActivity(null);
+    setMonoSessions(null);
+    setMonoArtifact(null);
+    setMonoChanges(null);
+  }, []);
+
+  closeMonoPanelsRef.current = closeMonoPanels;
+
   const onToggleThreads = useCallback(
     (projectId: string) => {
       if (openThreadIdsRef.current[projectId] || threadListOpen[projectId])
         onCloseProjectThread(projectId);
-      else
+      else {
+        closeMonoPanels();
         setThreadListOpen((previous) => ({ ...previous, [projectId]: true }));
+      }
     },
-    [onCloseProjectThread, threadListOpen],
+    [closeMonoPanels, onCloseProjectThread, threadListOpen],
   );
 
   /** Moves a thread out of the project view into a workspace tab. */
@@ -8299,7 +8315,7 @@ function Workspace({
                 .map((project) => project.path)
                 .join("|")}:${
                 coordinator
-                  ? `project-${COORDINATOR_PROMPT_VERSION}-${coordinatorPromptKey(monoRecord?.coordinatorPrompt)}`
+                  ? `project-${COORDINATOR_PROMPT_VERSION}`
                   : MONO_PROMPT_VERSION
               }`,
             };
@@ -8330,12 +8346,7 @@ function Workspace({
           ) {
             appContext.push(
               coordinator
-                ? coordinatorContext(
-                    agentLook,
-                    agentFiles,
-                    agentPlan,
-                    monoRecord?.coordinatorPrompt,
-                  )
+                ? coordinatorContext(agentLook, agentFiles, agentPlan)
                 : monoContext(agentLook, agentFiles, agentPlan),
             );
           }
@@ -12920,13 +12931,16 @@ function Workspace({
 
   // Renames, mascot picks and new projects show up on the rail.
   const monoViewMono = monoViewId ? monoForSession(monoViewId) : undefined;
+  const monoViewCoordinator = isCoordinatorProject(monoViewMono);
   const selectedMonoActivity = resolveMonoActivity(
     monoActivity,
     monoViewSession,
+    monoViewCoordinator,
   );
   const selectedMonoSessions = resolveMonoActivity(
     monoSessions,
     monoViewSession,
+    monoViewCoordinator,
   );
   // A thread beside the coordinator sits right of the Mono panels, so it
   // holds the window controls unless an artifact or changes panel follows.
@@ -12942,6 +12956,14 @@ function Workspace({
     !!selectedMonoSessions ||
     (monoArtifact?.sessionId === monoViewSession?.id && !!monoArtifact) ||
     (monoChanges?.sessionId === monoViewSession?.id && !!monoChanges);
+  // A panel opened from the chat (activity, sessions, an artifact, changes)
+  // takes the threads' place on a project's right side.
+  const monoPanelWasOpen = useRef(monoSidebarOpen);
+  useEffect(() => {
+    if (monoSidebarOpen && !monoPanelWasOpen.current && viewedProject)
+      onCloseProjectThread(viewedProject.id);
+    monoPanelWasOpen.current = monoSidebarOpen;
+  }, [monoSidebarOpen, viewedProject, onCloseProjectThread]);
   const monoDetailsPanel =
     monoViewMono && monoViewSession ? (
       <MonoDetails
@@ -13200,16 +13222,29 @@ function Workspace({
         ) : undefined
       }
       monoDetailsLabel={viewedProject ? "Project settings" : undefined}
+      monoDetailsIcon={viewedProject ? "settings" : undefined}
       onShowMonoDetails={
-        monoCovers && !monoDetailsOpen
+        monoCovers && viewedProject
           ? () => {
-              setMonoActivity(null);
-              setMonoSessions(null);
+              // In a project the settings take the threads' place, and the
+              // same button puts them away again.
+              if (monoDetailsOpen) {
+                setMonoDetailsOpen(false);
+                return;
+              }
+              onCloseProjectThread(viewedProject.id);
+              closeMonoPanels();
               setMonoDetailsOpen(true);
-              setMonoArtifact(null);
-              setMonoChanges(null);
             }
-          : undefined
+          : monoCovers && !monoDetailsOpen
+            ? () => {
+                setMonoActivity(null);
+                setMonoSessions(null);
+                setMonoDetailsOpen(true);
+                setMonoArtifact(null);
+                setMonoChanges(null);
+              }
+            : undefined
       }
       hideWindowControls={
         monoCovers &&
@@ -13677,39 +13712,41 @@ function Workspace({
                       ))}
                     </main>
                   </div>
-                  {monoCovers ? monoDetailsPanel : null}
-                  {monoCovers ? monoActivityPanel : null}
-                  {monoCovers ? monoSessionsPanel : null}
-                  {threadPanel}
-                  {monoViewMono &&
-                  monoArtifact &&
-                  monoArtifact.sessionId === monoViewSession?.id ? (
-                    <ArtifactPanel
-                      key={monoArtifact.id}
-                      id={monoArtifact.id}
-                      color={monoViewMono.color}
-                      onClose={onCloseMonoArtifact}
-                      onOpenFile={onOpenFile}
-                      windowControls={
-                        monoCovers && !IS_MAC ? <WindowControls /> : undefined
-                      }
-                    />
-                  ) : null}
-                  {monoViewMono &&
-                  monoChanges &&
-                  monoChanges.sessionId === monoViewSession?.id ? (
-                    <MonoChangesPanel
-                      sessionId={monoChanges.sessionId}
-                      cwd={monoChanges.cwd}
-                      request={monoChanges.request}
-                      color={monoViewMono.color}
-                      textHarness={monoViewSession?.harness}
-                      onClose={onCloseMonoChanges}
-                      windowControls={
-                        monoCovers && !IS_MAC ? <WindowControls /> : undefined
-                      }
-                    />
-                  ) : null}
+                  <ProjectPanelWidth.Provider value={!!viewedProject}>
+                    {monoCovers ? monoDetailsPanel : null}
+                    {monoCovers ? monoActivityPanel : null}
+                    {monoCovers ? monoSessionsPanel : null}
+                    {threadPanel}
+                    {monoViewMono &&
+                    monoArtifact &&
+                    monoArtifact.sessionId === monoViewSession?.id ? (
+                      <ArtifactPanel
+                        key={monoArtifact.id}
+                        id={monoArtifact.id}
+                        color={monoViewMono.color}
+                        onClose={onCloseMonoArtifact}
+                        onOpenFile={onOpenFile}
+                        windowControls={
+                          monoCovers && !IS_MAC ? <WindowControls /> : undefined
+                        }
+                      />
+                    ) : null}
+                    {monoViewMono &&
+                    monoChanges &&
+                    monoChanges.sessionId === monoViewSession?.id ? (
+                      <MonoChangesPanel
+                        sessionId={monoChanges.sessionId}
+                        cwd={monoChanges.cwd}
+                        request={monoChanges.request}
+                        color={monoViewMono.color}
+                        textHarness={monoViewSession?.harness}
+                        onClose={onCloseMonoChanges}
+                        windowControls={
+                          monoCovers && !IS_MAC ? <WindowControls /> : undefined
+                        }
+                      />
+                    ) : null}
+                  </ProjectPanelWidth.Provider>
                 </div>
               </div>
               {searchViewOpen ? (

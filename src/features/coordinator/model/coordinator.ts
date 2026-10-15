@@ -12,6 +12,7 @@ import {
   shellWords,
 } from "../../sessions/model/monocodeToolCall";
 import { unwrapShellCommand } from "../../../integrations/harness/core/shellIntent";
+import { isMonoCompletionPrompt } from "../../sessions/model/transcriptActivity";
 import { monoState, type MonoLook } from "../../monos/model/mono";
 import {
   MEMORY_MAX_LINES,
@@ -80,8 +81,8 @@ export type ThreadSteps = {
   items: TaskListItem[];
 };
 
-/** Threads with no activity for this long count as solved. */
-export const AUTO_RESOLVE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Inactive threads with no activity for this long count as solved. */
+export const AUTO_RESOLVE_MS = 3 * 24 * 60 * 60 * 1000;
 
 /**
  * The coordinator only routes work, so its own context should stay small:
@@ -111,7 +112,7 @@ function rotateAt(usage: { window?: number }, limit: number): number {
 }
 
 /** Bumped when the coordinator's fixed rules change, so live chats get them again. */
-export const COORDINATOR_PROMPT_VERSION = 2;
+export const COORDINATOR_PROMPT_VERSION = 5;
 
 const THREADS_KEY = "monocode:coordinator-threads";
 const THREADS_CHANGED = "monocode:coordinator-threads-changed";
@@ -404,18 +405,17 @@ export function threadView(input: {
       };
   }
   const reply = session ? lastReply(session) : undefined;
-  if (
-    thread.resolvedAt ||
-    summary?.archived ||
-    now - updatedAt > AUTO_RESOLVE_MS
-  )
+  if (thread.resolvedAt || summary?.archived)
     return { ...base, status: "solved", activity: reply };
+  // A finished reply nobody has read yet waits for the user, however old.
   if (unseen)
     return {
       ...base,
       status: "waiting",
       activity: reply ?? "Ready for review",
     };
+  if (now - updatedAt > AUTO_RESOLVE_MS)
+    return { ...base, status: "solved", activity: reply };
   return { ...base, status: "inactive", activity: reply };
 }
 
@@ -497,11 +497,12 @@ export function threadsBrief(views: readonly ThreadView[]): string {
 }
 
 /**
- * The coordinator's standing prompt: how it routes work. A project can
- * replace it from its settings. {{project}}, {{folders}} and {{path}} are
- * filled in with the project's name, its folders and its main folder.
+ * The coordinator's standing prompt: how it routes work. It is the same for
+ * every project, so it can improve in one place; a project adds its own
+ * instructions instead. {{project}}, {{folders}} and {{path}} are filled in
+ * with the project's name, its folders and its main folder.
  */
-export const DEFAULT_COORDINATOR_PROMPT = `You are the coordinator of the project "{{project}}" in MonoCode. Its code lives in:
+const COORDINATOR_PROMPT = `You are the coordinator of the project "{{project}}" in MonoCode. Its code lives in:
 {{folders}}
 Pass "project":"{{path}}" to app CLI calls. Every call takes its input as JSON after --json, and fields it does not list in \`app --help\` are rejected.
 
@@ -509,31 +510,29 @@ This is one long conversation the user keeps coming back to. You do not do the w
 
 For every message, pick exactly one of these and then end your turn:
 1. Answer directly. Quick questions about the project, the state of its work, or what a thread did: answer from the thread list below, your memory, or by reading a little of a thread with \`app sessions.read --json '{"sessionId":"<id>"}'\` (its latest exchanges only; ask for older ones only if needed). Do not open files or run commands to answer; if a question needs real digging, it is work for a thread.
-2. Forward to an existing thread. When the request belongs to work a thread already owns (same feature, same branch, a follow-up or correction), send it there with \`app sessions.send --json '{"sessionId":"<id>","prompt":"<the user's request, with any context the thread needs>","notifyOnComplete":true}'\`. Pass the user's words on faithfully; add context, do not rewrite their intent. If the thread is busy, the result says "queued": it gets the message after its current turn, and no completion report follows for a queued message, so say so.
+2. Forward to an existing thread. When the request belongs to work a thread already owns (same feature, same branch, a follow-up or correction), send it there with \`app sessions.send --json '{"sessionId":"<id>","prompt":"<the user's request, with any context the thread needs>","notifyOnComplete":true}'\`. Pass the user's words on faithfully; add context, do not rewrite their intent. This includes solved threads: a thread left inactive for three days is marked solved, and a follow-up you send it reopens it. If the thread is busy, the result says "queued": it gets the message after its current turn, and no completion report follows for a queued message, so say so.
 3. Start a new thread. For new work, call \`app sessions.start --json '{"title":"<3 to 6 word name>","prompt":"...","notifyOnComplete":true}'\` with a short title the user will recognise in the thread list and a clear, self-contained prompt: the goal, relevant context from this conversation, constraints, what it may change and how to check its work. Give each thread a separate worktree ("workspaceMode":"worktree") when other threads may edit the same code at the same time. Split truly independent parts into separate threads in the same turn.
 
-After forwarding or starting, tell the user in one or two short sentences which thread has it (by its title), and stop. MonoCode shows each thread you start or message as a card under your reply, with your message and the thread's live progress, so do not repeat the prompt in chat. Threads lay out their work as a step list the user can follow; you do not need to ask them to. Never wait, poll or do the thread's work in parallel. When a completion report arrives, read only what you need, then tell the user in a few lines what changed and whether anything needs them (a decision, a review, a permission). Never paste long output into this chat.
+Whenever you name a thread in chat, link it by its id: [<its title>](#thread-<sessionId>). MonoCode shows that link as the thread with its live status, and the user opens the thread by clicking it.
 
-Keep your own replies short and plain. Do not edit code, run builds or tests, or read the codebase yourself; threads have the full tools for that. You may read a thread's conversation, list sessions, archive a thread the user says is done, and manage memory.`;
+Your replies are one or two short sentences, like a colleague answering in chat. The details live in the threads: MonoCode shows each thread you start or message as a card under your reply with its live progress and latest reply, and shows the card again under your reply to its completion report, and the user opens a thread to read the rest. So never repeat a thread's prompt, findings, recommendation, lists or open questions in chat. No headings, bold labels, bullet lists or recaps of earlier messages. Some examples of the right length:
+- Starting a thread: "Shouldn't be too bad, starting on it."
+- Forwarding: "Added to [Servo drill sneak modes](#thread-<id>), so sneak can be set to any of the drill's modes."
+- Answering: "I sent it to [Solar panel balance](#thread-<id>) to check. My guess is the tooltip shows your saved config value."
+- Completion report: "[ST-169 research](#thread-<id>) is done and the card is in review. It recommends a forward button and has five questions for you in the thread."
 
-/** The names a coordinator prompt can use, filled in for each project. */
-export const COORDINATOR_PROMPT_PLACEHOLDERS = [
-  "{{project}}",
-  "{{folders}}",
-  "{{path}}",
-] as const;
+After forwarding or starting, say which thread has it (linked as above) and stop. Threads lay out their work as a step list the user can follow; you do not need to ask them to. Never wait, poll or do the thread's work in parallel. When a completion report arrives, these rules override its wording: read only what you need, then say in a sentence or two what came out of it and whether something needs the user (a decision, a review, a permission), pointing to the thread for the details rather than relaying them. A link the user needs (a PR, an artifact) may go in that sentence. When several threads report together, give each one sentence at most, and skip the ones with nothing for the user.
+
+Do not edit code, run builds or tests, or read the codebase yourself; threads have the full tools for that. You may read a thread's conversation, list sessions, archive a thread the user says is done, and manage memory.`;
 
 /** The prompt with the project's details filled in. */
 export function renderCoordinatorPrompt(
-  prompt: string | undefined,
   look: Pick<MonoLook, "name" | "projects">,
 ): string {
-  const template = prompt?.trim() || DEFAULT_COORDINATOR_PROMPT;
   const folders = look.projects.length
     ? look.projects.map((entry) => `- ${entry.name}: ${entry.path}`).join("\n")
     : "(no folder yet)";
-  return template
-    .split("{{project}}")
+  return COORDINATOR_PROMPT.split("{{project}}")
     .join(look.name)
     .split("{{folders}}")
     .join(folders)
@@ -541,28 +540,16 @@ export function renderCoordinatorPrompt(
     .join(look.projects[0]?.path ?? "");
 }
 
-/** A short fingerprint of a custom prompt, so a change is handed over again. */
-export function coordinatorPromptKey(prompt: string | undefined): string {
-  const text = prompt?.trim();
-  if (!text) return "default";
-  let hash = 0;
-  for (let i = 0; i < text.length; i++)
-    hash = (Math.imul(hash, 31) + text.charCodeAt(i)) | 0;
-  return (hash >>> 0).toString(36);
-}
-
 /** The coordinator's fixed rules and project knowledge, handed with a turn. */
 export function coordinatorContext(
   look: MonoLook,
   files: MonoFiles,
   plan: AgentContextPlan,
-  /** The project's own take on the coordinator prompt, if it has one. */
-  prompt?: string,
 ): string {
   const parts: string[] = [];
   if (plan.soul) {
     parts.push(
-      `<project_coordinator>\n${renderCoordinatorPrompt(prompt, look)}\n</project_coordinator>`,
+      `<project_coordinator>\n${renderCoordinatorPrompt(look)}\n</project_coordinator>`,
       `<project_instructions>\nThe project's standing instructions, from its settings. They apply to you and every thread: include the parts that matter in the prompts you send. They rank below the user's current request. Change them only when the user asks: read them with \`app soul.read --json '{}'\` and save the complete text with \`app soul.update --json '{"text":"...","expectedHash":"<hash>"}'\`.\n\n${files.soul.trim()}\n</project_instructions>`,
       `<memory_rules>\nThe project has a memory that carries across conversations and rotations of this chat. Its first ${MEMORY_MAX_LINES} lines load whenever it changes, so keep it to facts that stay useful: decisions, preferences (like how many threads to run at once), how the project works, open questions. Save them as you learn them, through the app CLI only: \`app memory.add {"fact":"..."}\`, \`app memory.replace {"find":"...","fact":"..."}\`, \`app memory.remove {"find":"..."}\`, \`app memory.search {"query":"..."}\`. Never save secrets.\n</memory_rules>`,
     );
@@ -580,13 +567,18 @@ export function coordinatorContext(
   return parts.join("\n\n");
 }
 
-/** One piece of work the coordinator handed to a thread in a turn. */
+/**
+ * One piece of work the coordinator handed to a thread in a turn, or a
+ * thread's report on it coming back.
+ */
 export type ThreadHandoff = {
-  kind: "start" | "send";
+  kind: "start" | "send" | "report";
   /** The thread, once the app accepted the call. */
   sessionId?: string;
-  /** What the coordinator told the thread. */
+  /** What the coordinator told the thread; empty for a report. */
   prompt: string;
+  /** How the reported run ended. */
+  outcome?: "completed" | "failed" | "cancelled";
   /** Waiting for a busy thread to finish its turn. */
   queued?: boolean;
   /** The call failed; nothing was handed over. */
@@ -625,7 +617,8 @@ function receipt(
 
 /**
  * The threads the coordinator started or messaged in one turn, with what it
- * told them, read from its app CLI calls and their receipts.
+ * told them, read from its app CLI calls and their receipts, and the threads
+ * whose completion reports the turn answers.
  */
 export function threadHandoffs(turn: readonly Block[]): ThreadHandoff[] {
   return turn.flatMap(blockHandoff);
@@ -637,10 +630,54 @@ const handoffCache = new WeakMap<Block, ThreadHandoff[]>();
 function blockHandoff(block: Block): ThreadHandoff[] {
   const cached = handoffCache.get(block);
   if (cached) return cached;
-  const found = parseHandoff(block);
-  const out = found ? [found] : [];
+  const found = isMonoCompletionPrompt(block)
+    ? parseReports(block)
+    : parseHandoff(block);
+  const out = Array.isArray(found) ? found : found ? [found] : [];
   handoffCache.set(block, out);
   return out;
+}
+
+const OUTCOMES = new Set(["completed", "failed", "cancelled"]);
+
+/** The threads in a completion report: one, or a group sent together. */
+function parseReports(block: Block): ThreadHandoff[] {
+  const report = (sessionId: unknown, status: unknown): ThreadHandoff[] =>
+    typeof sessionId === "string" && sessionId
+      ? [
+          {
+            kind: "report",
+            sessionId,
+            prompt: "",
+            ...(typeof status === "string" && OUTCOMES.has(status)
+              ? { outcome: status as ThreadHandoff["outcome"] }
+              : {}),
+          },
+        ]
+      : [];
+  // The results follow the notice as one JSON object.
+  const start = block.text.indexOf("\n\n{");
+  let payload: Record<string, unknown> | undefined;
+  try {
+    const value = start >= 0 ? JSON.parse(block.text.slice(start + 2)) : null;
+    if (value && typeof value === "object") payload = value;
+  } catch {
+    payload = undefined;
+  }
+  if (Array.isArray(payload?.sessions))
+    return payload.sessions.flatMap((entry: unknown) =>
+      entry && typeof entry === "object"
+        ? report(
+            (entry as Record<string, unknown>).sessionId,
+            (entry as Record<string, unknown>).status,
+          )
+        : [],
+    );
+  if (payload?.sessionId) return report(payload.sessionId, payload.status);
+  const marker = block.monoSessionCompletion;
+  return marker && !marker.sessionCount
+    ? report(marker.sessionId, marker.status)
+    : [];
 }
 
 function parseHandoff(block: Block): ThreadHandoff | undefined {
