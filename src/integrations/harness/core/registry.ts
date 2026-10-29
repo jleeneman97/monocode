@@ -20,6 +20,7 @@ import type {
   SendTurnInput,
   SteerTurnInput,
 } from "./types";
+import { TurnNotReadyError } from "./types";
 
 export type TitleInput = {
   sessionId: string;
@@ -148,6 +149,9 @@ const idleParkTimers = new Map<
 const sessionOperationTails = new Map<string, Promise<void>>();
 const sessionSteerTails = new Map<string, Promise<void>>();
 const activeTurnSessions = new Set<string>();
+/** Sent, but the provider has not accepted the turn yet (CLI still starting). */
+const startingTurnSessions = new Set<string>();
+const STEER_RETRY_MS = 250;
 
 function queueSessionOperation<T>(
   sessionId: string,
@@ -287,16 +291,19 @@ export function sendHarnessTurn(input: SendTurnInput & { harness: HarnessId }) {
         appAccess: input.appAccess === true,
       });
     activeTurnSessions.add(input.sessionId);
+    startingTurnSessions.add(input.sessionId);
     try {
       await adapter.sendTurn({
         ...input,
         onAccepted: () => {
+          startingTurnSessions.delete(input.sessionId);
           input.onEvent({ type: "turn.ready" });
           input.onAccepted?.();
         },
       });
     } finally {
       activeTurnSessions.delete(input.sessionId);
+      startingTurnSessions.delete(input.sessionId);
       if (controlled)
         await invoke("control_turn_finished", { sessionId: input.sessionId });
       scheduleIdlePark(input.harness, input.sessionId);
@@ -368,7 +375,22 @@ export function steerHarnessTurn(
       throw new Error(`${input.harness} is not connected yet`);
     }
     cancelIdlePark(input.sessionId);
-    await adapter.steerTurn(input);
+    // A follow-up sent while the turn is still starting (the CLI spawning or
+    // loading its MCP servers) has nothing to steer yet. Hold it until the
+    // turn is accepted instead of failing with "No active turn to steer".
+    for (;;) {
+      try {
+        await adapter.steerTurn(input);
+        return;
+      } catch (error) {
+        if (
+          !(error instanceof TurnNotReadyError) ||
+          !startingTurnSessions.has(input.sessionId)
+        )
+          throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, STEER_RETRY_MS));
+    }
   });
 }
 

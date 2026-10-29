@@ -20,9 +20,11 @@ import {
   registerHarness,
   resetHarnessIdlePark,
   sendHarnessTurn,
+  steerHarnessTurn,
   type HarnessAdapter,
 } from "./registry";
 import type { SendTurnInput, SteerTurnInput } from "./types";
+import { TurnNotReadyError } from "./types";
 import { registerBuiltinHarnesses } from "./register";
 
 function stub(
@@ -97,6 +99,73 @@ describe("harness registry", () => {
     expect(onAccepted).toHaveBeenCalledOnce();
     finish();
     await sending;
+  });
+
+  it("holds a follow-up sent while the turn is still starting until the provider accepts it", async () => {
+    let accepted!: () => void;
+    let finish!: () => void;
+    let ready = false;
+    const steered = vi.fn();
+    registerHarness(
+      stub("claude", {
+        async sendTurn(input) {
+          accepted = () => {
+            ready = true;
+            input.onAccepted?.();
+          };
+          await new Promise<void>((resolve) => {
+            finish = resolve;
+          });
+        },
+        async steerTurn(input) {
+          if (!ready) throw new TurnNotReadyError("No active turn to steer");
+          steered(input.text);
+        },
+      }),
+    );
+    const sending = sendHarnessTurn({
+      harness: "claude",
+      sessionId: "starting-steer",
+      cwd: "/tmp",
+      model: "claude:opus",
+      runtimeMode: "supervised",
+      text: "Hello",
+      onEvent: vi.fn(),
+    });
+    await vi.waitFor(() => expect(accepted).toBeDefined());
+    const steering = steerHarnessTurn({
+      harness: "claude",
+      sessionId: "starting-steer",
+      cwd: "/tmp",
+      model: "claude:opus",
+      text: "And this",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(steered).not.toHaveBeenCalled();
+    accepted();
+    await steering;
+    expect(steered).toHaveBeenCalledExactlyOnceWith("And this");
+    finish();
+    await sending;
+  });
+
+  it("still refuses a follow-up when no turn is starting", async () => {
+    registerHarness(
+      stub("claude", {
+        async steerTurn() {
+          throw new TurnNotReadyError("No active turn to steer");
+        },
+      }),
+    );
+    await expect(
+      steerHarnessTurn({
+        harness: "claude",
+        sessionId: "idle-steer",
+        cwd: "/tmp",
+        model: "claude:opus",
+        text: "Hi",
+      }),
+    ).rejects.toBeInstanceOf(TurnNotReadyError);
   });
 
   it("advertises isolated text prompt support by harness", () => {
