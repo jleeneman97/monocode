@@ -22,6 +22,10 @@ struct RecordedTurn {
     /// Older shared snapshots have no attribution evidence and stay out of the card.
     #[serde(default)]
     edited: BTreeSet<String>,
+    /// Untracked files too large to snapshot. Both sides of the turn leave
+    /// them out, so the review never reports them as added or deleted.
+    #[serde(default)]
+    skipped: BTreeSet<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -103,6 +107,10 @@ impl CheckpointStore {
                 .as_ref()
                 .map(|turn| turn.edited.clone())
                 .unwrap_or_default(),
+            skipped: pending
+                .as_ref()
+                .map(|turn| turn.skipped.clone())
+                .unwrap_or_default(),
         };
         // Publish the pending state first. A failed baseline must not leave the
         // previous turn's card underneath the new response.
@@ -127,7 +135,9 @@ impl CheckpointStore {
                 run_git(&root, &["update-ref", &reference, before])?;
                 Ok(before.clone())
             } else {
-                capture_workspace(&root, &reference)
+                let (oid, skipped) = capture_workspace(&root, &reference, &turn.skipped)?;
+                turn.skipped = skipped;
+                Ok(oid)
             }
         })();
         match capture {
@@ -151,8 +161,15 @@ impl CheckpointStore {
             return Ok(());
         };
         if turn.before.is_some() {
-            match capture_workspace(Path::new(&review.cwd), &turn_ref(session_id, id, "after")) {
-                Ok(oid) => turn.after = Some(oid),
+            match capture_workspace(
+                Path::new(&review.cwd),
+                &turn_ref(session_id, id, "after"),
+                &turn.skipped,
+            ) {
+                Ok((oid, skipped)) => {
+                    turn.after = Some(oid);
+                    turn.skipped = skipped;
+                }
                 Err(error) => turn.error = Some(error),
             }
         }
@@ -639,7 +656,37 @@ impl Drop for PrivateIndex {
     }
 }
 
-fn capture_workspace(root: &Path, reference: &str) -> Result<String, String> {
+/// Untracked files above this size (a database dump, a media export) stay out
+/// of checkpoints. Hashing and storing them on every turn took minutes, and the
+/// store lock held every other session's turn behind it.
+const MAX_CHECKPOINT_FILE_BYTES: u64 = if cfg!(test) { 1024 } else { 64 * 1024 * 1024 };
+
+/// Untracked files too large to snapshot, plus any skipped earlier in the turn.
+fn oversized_untracked(
+    root: &Path,
+    run: &impl Fn(&[&str]) -> Result<Vec<u8>, String>,
+    skipped: &BTreeSet<String>,
+) -> Result<BTreeSet<String>, String> {
+    let mut oversized = skipped.clone();
+    let listed = run(&["ls-files", "--others", "--exclude-standard", "-z"])?;
+    for path in listed.split(|byte| *byte == 0).filter(|path| !path.is_empty()) {
+        let Ok(relative) = String::from_utf8(path.to_vec()) else {
+            continue;
+        };
+        let large = std::fs::symlink_metadata(root.join(&relative))
+            .is_ok_and(|meta| meta.is_file() && meta.len() > MAX_CHECKPOINT_FILE_BYTES);
+        if large {
+            oversized.insert(relative);
+        }
+    }
+    Ok(oversized)
+}
+
+fn capture_workspace(
+    root: &Path,
+    reference: &str,
+    skipped: &BTreeSet<String>,
+) -> Result<(String, BTreeSet<String>), String> {
     if run_git(root, &["config", "--bool", "core.sparseCheckout"])
         .ok()
         .is_some_and(|bytes| bytes.starts_with(b"true"))
@@ -649,16 +696,17 @@ fn capture_workspace(root: &Path, reference: &str) -> Result<String, String> {
     let index = PrivateIndex(
         std::env::temp_dir().join(format!("monocode-checkpoint-{}", uuid::Uuid::new_v4())),
     );
-    let run = |args: &[&str]| {
-        checked_output(
-            git_command(root, args)
-                .env("GIT_INDEX_FILE", &index.0)
+    let command = |args: &[&str]| {
+        let mut command = git_command(root, args);
+        command
+            .env("GIT_INDEX_FILE", &index.0)
                 .env("GIT_AUTHOR_NAME", "MonoCode")
                 .env("GIT_AUTHOR_EMAIL", "checkpoint@monocode.local")
                 .env("GIT_COMMITTER_NAME", "MonoCode")
-                .env("GIT_COMMITTER_EMAIL", "checkpoint@monocode.local"),
-        )
+            .env("GIT_COMMITTER_EMAIL", "checkpoint@monocode.local");
+        command
     };
+    let run = |args: &[&str]| checked_output(&mut command(args));
     if run_git(root, &["rev-parse", "--verify", "HEAD"]).is_ok() {
         run(&["read-tree", "HEAD"])?;
     } else {
@@ -670,7 +718,15 @@ fn capture_workspace(root: &Path, reference: &str) -> Result<String, String> {
         "-c",
         "core.fsyncMethod=fsync",
     ];
-    run(&[durable.as_slice(), &["add", "-A", "--", "."]].concat())?;
+    let skipped = oversized_untracked(root, &run, skipped)?;
+    let excludes: Vec<String> = skipped
+        .iter()
+        .map(|relative| format!(":(exclude,literal){relative}"))
+        .collect();
+    let mut add = [durable.as_slice(), &["add", "-A", "--", "."]].concat();
+    add.extend(excludes.iter().map(String::as_str));
+    // Exclusions are pathspec magic, which literal pathspecs turn off.
+    checked_output(command(&add).env("GIT_LITERAL_PATHSPECS", "0"))?;
     let tree = String::from_utf8(run(&[durable.as_slice(), &["write-tree"]].concat())?)
         .map_err(|e| e.to_string())?;
     let commit = String::from_utf8(run(&[
@@ -689,7 +745,7 @@ fn capture_workspace(root: &Path, reference: &str) -> Result<String, String> {
         &["update-ref", reference, commit.trim()],
     ]
     .concat())?;
-    Ok(commit.trim().to_string())
+    Ok((commit.trim().to_string(), skipped))
 }
 
 fn changes(root: &Path, turn: &RecordedTurn) -> Result<Vec<Change>, String> {

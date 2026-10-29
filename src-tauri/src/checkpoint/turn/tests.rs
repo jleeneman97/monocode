@@ -442,6 +442,32 @@ fn records_empty_binary_and_unusual_paths_without_the_old_file_limit() {
 }
 
 #[test]
+fn oversized_untracked_files_stay_out_of_both_sides_of_the_turn() {
+    let f = Fixture::new();
+    let large = "x".repeat(MAX_CHECKPOINT_FILE_BYTES as usize + 1);
+    f.write("dump.sql", &large);
+    f.store.begin_turn("session", f.cwd(), "first").unwrap();
+    // Shrinking below the limit must not make the file look newly added,
+    // or undo would delete the user's own file.
+    f.write("dump.sql", "small now\n");
+    f.write("export.sql", &large);
+    f.write("a.txt", "agent change\n");
+    f.store.finish_turn("session", f.cwd(), "first").unwrap();
+    let status = f.store.status("session", f.cwd()).unwrap();
+    assert_eq!(
+        status
+            .files
+            .iter()
+            .map(|file| file.relative.as_str())
+            .collect::<Vec<_>>(),
+        ["a.txt"]
+    );
+    f.store.undo("session", f.cwd(), None).unwrap();
+    assert!(f.repo.join("dump.sql").exists());
+    assert!(f.repo.join("export.sql").exists());
+}
+
+#[test]
 fn commits_during_the_turn_clear_review_but_preserve_the_recorded_diff() {
     let f = Fixture::new();
     f.store.begin_turn("session", f.cwd(), "first").unwrap();
